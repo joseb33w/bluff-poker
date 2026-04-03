@@ -4,168 +4,209 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Bluff Poker</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Playfair+Display:wght@700;900&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div class="felt-bg"></div>
-  <div class="felt-overlay"></div>
 
-  <!-- MUTE TOGGLE -->
-  <button class="mute-btn" id="muteBtn" title="Toggle Sound">
-    <svg id="muteIcon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" class="sound-wave sw1"></path>
-      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" class="sound-wave sw2"></path>
-    </svg>
-  </button>
+  <!-- TOAST CONTAINER -->
+  <div id="toastContainer" class="toast-container"></div>
 
-  <!-- JOIN SCREEN -->
-  <section id="joinView" class="view active">
-    <div class="join-card">
-      <div class="logo">
-        <span class="logo-icon">♠</span>
-        <h1>Bluff Poker</h1>
-        <p class="tagline">Bet big. Lie bigger.</p>
+  <!-- CONFETTI CANVAS -->
+  <canvas id="confettiCanvas" class="confetti-canvas"></canvas>
+
+  <!-- PHASE BANNER -->
+  <div id="phaseBanner" class="phase-banner">
+    <span id="phaseBannerText"></span>
+  </div>
+
+  <!-- ========== JOIN SCREEN ========== -->
+  <section id="joinScreen" class="screen active">
+    <div class="join-wrapper">
+      <div class="brand">
+        <div class="brand-logo">🃏</div>
+        <h1 class="brand-title">BLUFF<span>POKER</span></h1>
+        <p class="brand-tagline">Lie. Bet. Win.</p>
       </div>
-      <form id="joinForm" class="join-form">
-        <input type="text" id="nameInput" placeholder="Enter your display name" maxlength="16" required autocomplete="off" />
-        <button type="submit" class="btn btn-primary" id="joinBtn">Join Lobby</button>
-      </form>
-      <p class="join-status" id="joinStatus"></p>
+      <div class="join-card">
+        <label for="nameInput" class="join-label">Your display name</label>
+        <input type="text" id="nameInput" class="join-input" placeholder="Enter your name" maxlength="16" autocomplete="off" />
+        <button id="joinBtn" class="btn-primary btn-glow" disabled>
+          <span>Join the Table</span>
+          <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </button>
+        <p class="join-hint">Free to play · No sign-up required</p>
+      </div>
     </div>
   </section>
 
-  <!-- LOBBY -->
-  <section id="lobbyView" class="view">
-    <div class="lobby-container">
+  <!-- ========== LOBBY ========== -->
+  <section id="lobbyScreen" class="screen">
+    <div class="lobby-wrapper">
       <div class="lobby-header">
-        <div>
-          <p class="eyebrow">♠ Bluff Poker Lobby</p>
-          <h2>Waiting for players...</h2>
-        </div>
-        <div class="lobby-actions">
-          <button class="btn btn-gold" id="startGameBtn" disabled>Start Game</button>
-          <button class="btn btn-ai" id="playAIBtn">
-            <span class="ai-icon">🤖</span> Play vs Computer
-          </button>
-          <button class="btn btn-ghost" id="leaveLobbyBtn">Leave</button>
-        </div>
-      </div>
-
-      <!-- AI DIFFICULTY PICKER (hidden by default) -->
-      <div class="ai-picker" id="aiPicker" hidden>
-        <div class="ai-picker-card">
-          <h3>🤖 Choose Your Opponent</h3>
-          <p class="ai-picker-sub">Select difficulty level</p>
-          <div class="ai-difficulty-grid">
-            <button class="ai-diff-btn" data-diff="easy">
-              <span class="ai-diff-emoji">😎</span>
-              <span class="ai-diff-name">Easy</span>
-              <span class="ai-diff-desc">Cautious & predictable</span>
+        <div class="lobby-title-row">
+          <h2 class="lobby-title">🃏 Lobby</h2>
+          <div class="lobby-actions">
+            <button id="muteBtn" class="icon-btn" title="Toggle sound">
+              <svg id="muteIcon" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
             </button>
-            <button class="ai-diff-btn" data-diff="medium">
-              <span class="ai-diff-emoji">🧠</span>
-              <span class="ai-diff-name">Medium</span>
-              <span class="ai-diff-desc">Balanced strategy</span>
-            </button>
-            <button class="ai-diff-btn" data-diff="hard">
-              <span class="ai-diff-emoji">🔥</span>
-              <span class="ai-diff-name">Hard</span>
-              <span class="ai-diff-desc">Aggressive bluffer</span>
-            </button>
-            <button class="ai-diff-btn" data-diff="chaos">
-              <span class="ai-diff-emoji">🃏</span>
-              <span class="ai-diff-name">Chaos</span>
-              <span class="ai-diff-desc">Totally unpredictable</span>
+            <button id="leaveBtn" class="icon-btn" title="Leave lobby">
+              <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
             </button>
           </div>
-          <button class="btn btn-ghost ai-cancel-btn" id="aiCancelBtn">Cancel</button>
         </div>
+        <p class="lobby-sub" id="lobbySub">Waiting for players…</p>
       </div>
 
-      <div class="players-grid" id="playersGrid"></div>
+      <!-- Players -->
+      <div class="lobby-players" id="lobbyPlayers"></div>
+
+      <!-- Game Modes -->
+      <div class="lobby-modes">
+        <button id="startGameBtn" class="btn-primary btn-glow" disabled>
+          <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <span>Start Multiplayer</span>
+        </button>
+        <div class="mode-divider"><span>or play solo</span></div>
+        <button id="aiGameBtn" class="btn-secondary">
+          <span>🤖</span>
+          <span>Play vs AI</span>
+        </button>
+      </div>
+
+      <!-- AI Difficulty Picker -->
+      <div id="aiPicker" class="ai-picker hidden">
+        <h3 class="ai-picker-title">Choose AI Difficulty</h3>
+        <div class="ai-difficulty-grid">
+          <button class="ai-diff-btn" data-diff="easy">
+            <span class="ai-diff-emoji">😊</span>
+            <span class="ai-diff-label">Easy</span>
+            <span class="ai-diff-desc">Folds often, rarely bluffs</span>
+          </button>
+          <button class="ai-diff-btn" data-diff="medium">
+            <span class="ai-diff-emoji">🧐</span>
+            <span class="ai-diff-label">Medium</span>
+            <span class="ai-diff-desc">Balanced play style</span>
+          </button>
+          <button class="ai-diff-btn" data-diff="hard">
+            <span class="ai-diff-emoji">😈</span>
+            <span class="ai-diff-label">Hard</span>
+            <span class="ai-diff-desc">Aggressive & tricky</span>
+          </button>
+          <button class="ai-diff-btn" data-diff="chaos">
+            <span class="ai-diff-emoji">🤡</span>
+            <span class="ai-diff-label">Chaos</span>
+            <span class="ai-diff-desc">Completely unhinged</span>
+          </button>
+        </div>
+        <button id="aiPickerCancel" class="btn-text">Cancel</button>
+      </div>
+
+      <!-- Leaderboard -->
       <div class="leaderboard-section">
-        <h3>🏆 Leaderboard</h3>
+        <h3 class="leaderboard-title">🏆 Leaderboard</h3>
         <div id="leaderboardList" class="leaderboard-list"></div>
       </div>
     </div>
   </section>
 
-  <!-- GAME TABLE -->
-  <section id="gameView" class="view">
-    <div class="game-container">
-      <div class="game-topbar">
+  <!-- ========== GAME TABLE ========== -->
+  <section id="gameScreen" class="screen">
+    <div class="game-wrapper">
+      <!-- Top bar -->
+      <div class="game-top-bar">
+        <button id="gameMuteBtn" class="icon-btn icon-btn-sm" title="Toggle sound">
+          <svg id="gameMuteIcon" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+        </button>
         <div class="game-info">
-          <span class="phase-badge" id="phaseBadge">Betting</span>
-          <span class="pot-display">Pot: <strong id="potDisplay">0</strong></span>
-          <span class="ai-badge" id="aiBadge" hidden>🤖 VS COMPUTER</span>
+          <span class="game-phase" id="gamePhase">Waiting</span>
+          <span class="game-round" id="gameRound"></span>
         </div>
-        <div class="my-chips">
-          <span class="chip-icon">🪙</span>
-          <strong id="myChipsDisplay">500</strong>
-        </div>
+        <button id="gameLeaveBtn" class="icon-btn icon-btn-sm" title="Leave game">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
       </div>
 
-      <!-- OPPONENTS -->
+      <!-- Opponents -->
       <div class="opponents-row" id="opponentsRow"></div>
 
-      <!-- TABLE CENTER -->
-      <div class="table-center">
-        <div class="pot-area">
-          <div class="pot-chips" id="potChips"></div>
-          <p class="pot-label">Pot: <span id="potCenter">0</span></p>
-        </div>
-        <div class="game-message" id="gameMessage"></div>
-      </div>
-
-      <!-- MY HAND -->
-      <div class="my-hand-area">
-        <div class="my-cards" id="myCards"></div>
-        <p class="hand-label" id="handLabel">Your Hand</p>
-      </div>
-
-      <!-- BETTING CONTROLS -->
-      <div class="controls-area" id="controlsArea">
-        <div class="bet-controls" id="betControls" hidden>
-          <button class="btn btn-bet" data-action="fold">Fold</button>
-          <button class="btn btn-bet" data-action="call">Call</button>
-          <button class="btn btn-bet btn-raise" data-action="bet" data-amount="10">10</button>
-          <button class="btn btn-bet btn-raise" data-action="bet" data-amount="25">25</button>
-          <button class="btn btn-bet btn-raise" data-action="bet" data-amount="50">50</button>
-          <button class="btn btn-bet btn-raise" data-action="bet" data-amount="100">100</button>
-        </div>
-        <div class="bluff-controls" id="bluffControls" hidden>
-          <p class="bluff-prompt">Claim how strong your hand is:</p>
-          <div class="bluff-options">
-            <button class="btn btn-bluff" data-rank="1">High Card</button>
-            <button class="btn btn-bluff" data-rank="2">Pair</button>
-            <button class="btn btn-bluff" data-rank="3">Two Pair</button>
-            <button class="btn btn-bluff" data-rank="4">Three of a Kind</button>
-            <button class="btn btn-bluff" data-rank="5">Straight</button>
-            <button class="btn btn-bluff" data-rank="6">Flush</button>
-          </div>
-        </div>
-        <div class="callbluff-controls" id="callBluffControls" hidden>
-          <p class="bluff-prompt">Call someone's bluff?</p>
-          <div class="bluff-claims" id="bluffClaims"></div>
+      <!-- Pot -->
+      <div class="pot-area">
+        <div class="pot-display">
+          <span class="pot-label">POT</span>
+          <span class="pot-amount" id="potAmount">0</span>
         </div>
       </div>
 
-      <!-- ACTION LOG -->
-      <div class="action-log" id="actionLog"></div>
+      <!-- Community / Bluff Zone -->
+      <div class="bluff-zone" id="bluffZone"></div>
+
+      <!-- Player Hand -->
+      <div class="player-hand-area">
+        <div class="player-cards" id="playerCards"></div>
+        <div class="hand-label" id="handLabel"></div>
+      </div>
+
+      <!-- Action Bar -->
+      <div class="action-bar" id="actionBar">
+        <button class="action-btn fold-btn" id="foldBtn" disabled>
+          <span class="action-icon">🏳️</span>
+          <span>Fold</span>
+        </button>
+        <button class="action-btn call-btn" id="callBtn" disabled>
+          <span class="action-icon">📞</span>
+          <span id="callBtnLabel">Call</span>
+        </button>
+        <button class="action-btn raise-btn" id="raiseBtn" disabled>
+          <span class="action-icon">🔥</span>
+          <span>Raise</span>
+        </button>
+        <button class="action-btn bluff-btn" id="bluffBtn" disabled>
+          <span class="action-icon">🎭</span>
+          <span>Bluff!</span>
+        </button>
+      </div>
+
+      <!-- Raise Slider -->
+      <div class="raise-slider-wrap hidden" id="raiseSliderWrap">
+        <div class="raise-header">
+          <span>Raise to:</span>
+          <span class="raise-value" id="raiseValue">0</span>
+        </div>
+        <input type="range" id="raiseSlider" class="raise-slider" min="0" max="1000" step="10" />
+        <div class="raise-actions">
+          <button class="btn-text" id="raiseCancelBtn">Cancel</button>
+          <button class="btn-primary btn-sm" id="raiseConfirmBtn">Confirm Raise</button>
+        </div>
+      </div>
+
+      <!-- Player info -->
+      <div class="player-info-bar">
+        <div class="player-chip-count">
+          <span class="chip-icon">🪙</span>
+          <span class="chip-count-value" id="playerChips">0</span>
+        </div>
+        <div class="player-name-tag" id="playerNameTag"></div>
+      </div>
+
+      <!-- Action Log -->
+      <div class="action-log" id="actionLog">
+        <div class="action-log-inner" id="actionLogInner"></div>
+      </div>
     </div>
   </section>
 
-  <!-- RESULTS OVERLAY -->
-  <div class="results-overlay" id="resultsOverlay" hidden>
+  <!-- ========== RESULTS OVERLAY ========== -->
+  <div id="resultsOverlay" class="results-overlay hidden">
     <div class="results-card">
-      <h2 id="resultsTitle">Round Over!</h2>
-      <div id="resultsBody"></div>
-      <button class="btn btn-primary" id="nextRoundBtn">Next Round</button>
-      <button class="btn btn-ghost" id="backToLobbyBtn">Back to Lobby</button>
+      <div class="results-emoji" id="resultsEmoji">🏆</div>
+      <h2 class="results-title" id="resultsTitle">Round Over</h2>
+      <p class="results-detail" id="resultsDetail"></p>
+      <div class="results-hands" id="resultsHands"></div>
+      <button class="btn-primary" id="resultsNextBtn">Next Round</button>
+      <button class="btn-text" id="resultsLeaveBtn">Leave Table</button>
     </div>
   </div>
 

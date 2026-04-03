@@ -2,1759 +2,1276 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 
 ;(async () => {
   try {
+    /* ===== CONFIG ===== */
     const SUPABASE_URL = 'https://xhhmxabftbyxrirvvihn.supabase.co'
     const SUPABASE_KEY = 'sb_publishable_NZHoIxqqpSvVBP8MrLHCYA_gmg1AbN-'
-    const T_PLAYERS = 'uNMexs7BYTXQ2_bluff_poker_players'
-    const T_GAMES = 'uNMexs7BYTXQ2_bluff_poker_games'
-    const T_HANDS = 'uNMexs7BYTXQ2_bluff_poker_hands'
-    const T_ACTIONS = 'uNMexs7BYTXQ2_bluff_poker_actions'
-    const T_BLUFFS = 'uNMexs7BYTXQ2_bluff_poker_bluffs'
+    const P_TABLE = 'uNMexs7BYTXQ2_bluff_poker_players'
+    const G_TABLE = 'uNMexs7BYTXQ2_bluff_poker_games'
+    const H_TABLE = 'uNMexs7BYTXQ2_bluff_poker_hands'
+    const A_TABLE = 'uNMexs7BYTXQ2_bluff_poker_actions'
+    const B_TABLE = 'uNMexs7BYTXQ2_bluff_poker_bluffs'
     const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
-    /* ========== SOUND ENGINE ========== */
+    /* ===== STORAGE KEYS ===== */
+    const LS_PLAYER_ID = 'bluff_poker_player_id'
+    const LS_NAME = 'bluff_poker_name'
+    const LS_MUTED = 'bluff_poker_muted'
+    const LS_GAME_ID = 'bluff_poker_current_game'
+
+    /* ===== DOM ===== */
+    const $ = id => document.getElementById(id)
+    const joinScreen = $('joinScreen')
+    const lobbyScreen = $('lobbyScreen')
+    const gameScreen = $('gameScreen')
+    const nameInput = $('nameInput')
+    const joinBtn = $('joinBtn')
+    const lobbyPlayers = $('lobbyPlayers')
+    const lobbySub = $('lobbySub')
+    const startGameBtn = $('startGameBtn')
+    const aiGameBtn = $('aiGameBtn')
+    const aiPicker = $('aiPicker')
+    const aiPickerCancel = $('aiPickerCancel')
+    const leaveBtn = $('leaveBtn')
+    const muteBtn = $('muteBtn')
+    const gameMuteBtn = $('gameMuteBtn')
+    const gameLeaveBtn = $('gameLeaveBtn')
+    const gamePhase = $('gamePhase')
+    const gameRound = $('gameRound')
+    const opponentsRow = $('opponentsRow')
+    const potAmountEl = $('potAmount')
+    const bluffZone = $('bluffZone')
+    const playerCards = $('playerCards')
+    const handLabel = $('handLabel')
+    const foldBtn = $('foldBtn')
+    const callBtn = $('callBtn')
+    const callBtnLabel = $('callBtnLabel')
+    const raiseBtn = $('raiseBtn')
+    const bluffBtn = $('bluffBtn')
+    const raiseSliderWrap = $('raiseSliderWrap')
+    const raiseSlider = $('raiseSlider')
+    const raiseValue = $('raiseValue')
+    const raiseCancelBtn = $('raiseCancelBtn')
+    const raiseConfirmBtn = $('raiseConfirmBtn')
+    const playerChipsEl = $('playerChips')
+    const playerNameTag = $('playerNameTag')
+    const actionBar = $('actionBar')
+    const actionLogInner = $('actionLogInner')
+    const resultsOverlay = $('resultsOverlay')
+    const resultsEmoji = $('resultsEmoji')
+    const resultsTitle = $('resultsTitle')
+    const resultsDetail = $('resultsDetail')
+    const resultsHands = $('resultsHands')
+    const resultsNextBtn = $('resultsNextBtn')
+    const resultsLeaveBtn = $('resultsLeaveBtn')
+    const leaderboardList = $('leaderboardList')
+    const toastContainer = $('toastContainer')
+    const confettiCanvas = $('confettiCanvas')
+    const phaseBanner = $('phaseBanner')
+    const phaseBannerText = $('phaseBannerText')
+
+    /* ===== STATE ===== */
+    let playerId = null
+    let playerName = ''
+    let currentGameId = null
+    let isAiGame = false
+    let aiDifficulty = 'medium'
+    let aiPlayers = []
+    let gameState = null
+    let myHand = null
+    let isMuted = localStorage.getItem(LS_MUTED) === 'true'
+    let lobbyChannel = null
+    let gameChannel = null
+    let pendingRaise = 0
+    let lastPhase = ''
+    let previousChips = 0
+
+    /* ===== AUDIO ===== */
     let audioCtx = null
-    let isMuted = false
-
-    function getAudioCtx() {
+    function ensureAudio() {
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)()
-      return audioCtx
+      if (audioCtx.state === 'suspended') audioCtx.resume()
     }
-
-    function playTone(freq, duration, type = 'sine', vol = 0.15) {
+    function playSound(type) {
       if (isMuted) return
       try {
-        const ctx = getAudioCtx()
-        const osc = ctx.createOscillator()
-        const gain = ctx.createGain()
-        osc.type = type
-        osc.frequency.value = freq
-        gain.gain.setValueAtTime(vol, ctx.currentTime)
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration)
+        ensureAudio()
+        const osc = audioCtx.createOscillator()
+        const gain = audioCtx.createGain()
         osc.connect(gain)
-        gain.connect(ctx.destination)
-        osc.start()
-        osc.stop(ctx.currentTime + duration)
-      } catch (e) { /* ignore audio errors */ }
+        gain.connect(audioCtx.destination)
+        const now = audioCtx.currentTime
+        switch (type) {
+          case 'click':
+            osc.frequency.setValueAtTime(800, now)
+            gain.gain.setValueAtTime(0.15, now)
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1)
+            osc.start(now); osc.stop(now + 0.1)
+            break
+          case 'deal':
+            osc.frequency.setValueAtTime(300, now)
+            osc.frequency.exponentialRampToValueAtTime(600, now + 0.15)
+            gain.gain.setValueAtTime(0.12, now)
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2)
+            osc.start(now); osc.stop(now + 0.2)
+            break
+          case 'chips':
+            osc.type = 'triangle'
+            osc.frequency.setValueAtTime(1200, now)
+            osc.frequency.exponentialRampToValueAtTime(400, now + 0.2)
+            gain.gain.setValueAtTime(0.1, now)
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25)
+            osc.start(now); osc.stop(now + 0.25)
+            break
+          case 'win':
+            osc.type = 'sine'
+            osc.frequency.setValueAtTime(523, now)
+            osc.frequency.setValueAtTime(659, now + 0.15)
+            osc.frequency.setValueAtTime(784, now + 0.3)
+            gain.gain.setValueAtTime(0.15, now)
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5)
+            osc.start(now); osc.stop(now + 0.5)
+            break
+          case 'fold':
+            osc.type = 'sawtooth'
+            osc.frequency.setValueAtTime(400, now)
+            osc.frequency.exponentialRampToValueAtTime(200, now + 0.2)
+            gain.gain.setValueAtTime(0.08, now)
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25)
+            osc.start(now); osc.stop(now + 0.25)
+            break
+          case 'bluff':
+            osc.type = 'square'
+            osc.frequency.setValueAtTime(200, now)
+            osc.frequency.exponentialRampToValueAtTime(800, now + 0.3)
+            gain.gain.setValueAtTime(0.1, now)
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35)
+            osc.start(now); osc.stop(now + 0.35)
+            break
+          case 'turn':
+            osc.type = 'sine'
+            osc.frequency.setValueAtTime(600, now)
+            osc.frequency.setValueAtTime(800, now + 0.1)
+            gain.gain.setValueAtTime(0.12, now)
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2)
+            osc.start(now); osc.stop(now + 0.2)
+            break
+        }
+      } catch (e) { /* audio error ok */ }
     }
 
-    const SFX = {
-      deal() { playTone(800, 0.08, 'triangle', 0.12); setTimeout(() => playTone(600, 0.06, 'triangle', 0.1), 60) },
-      bet() { playTone(500, 0.1, 'square', 0.08); setTimeout(() => playTone(700, 0.08, 'square', 0.06), 50) },
-      fold() { playTone(300, 0.15, 'sawtooth', 0.06) },
-      win() { [0, 100, 200, 300].forEach((d, i) => setTimeout(() => playTone(523 + i * 100, 0.15, 'sine', 0.12), d)) },
-      lose() { playTone(300, 0.3, 'sawtooth', 0.1); setTimeout(() => playTone(200, 0.4, 'sawtooth', 0.08), 200) },
-      bluff() { playTone(400, 0.12, 'square', 0.1); setTimeout(() => playTone(600, 0.1, 'triangle', 0.08), 80) },
-      callBluff() { playTone(900, 0.1, 'sine', 0.12); setTimeout(() => playTone(1100, 0.15, 'sine', 0.1), 100) },
-      click() { playTone(1000, 0.04, 'sine', 0.08) }
+    /* ===== TOAST SYSTEM ===== */
+    function showToast(message, type = 'info', emoji = '', duration = 3000) {
+      const toast = document.createElement('div')
+      toast.className = `toast toast-${type}`
+      toast.innerHTML = `${emoji ? `<span class="toast-emoji">${emoji}</span>` : ''}<span class="toast-text">${message}</span>`
+      toastContainer.appendChild(toast)
+      setTimeout(() => {
+        toast.classList.add('removing')
+        setTimeout(() => toast.remove(), 350)
+      }, duration)
     }
 
-    /* ========== DOM ========== */
-    const $ = id => document.getElementById(id)
-    const views = { join: $('joinView'), lobby: $('lobbyView'), game: $('gameView') }
-    const joinForm = $('joinForm')
-    const nameInput = $('nameInput')
-    const joinStatus = $('joinStatus')
-    const playersGrid = $('playersGrid')
-    const leaderboardList = $('leaderboardList')
-    const startGameBtn = $('startGameBtn')
-    const leaveLobbyBtn = $('leaveLobbyBtn')
-    const playAIBtn = $('playAIBtn')
-    const aiPicker = $('aiPicker')
-    const aiCancelBtn = $('aiCancelBtn')
-    const aiBadge = $('aiBadge')
-    const muteBtn = $('muteBtn')
-    const phaseBadge = $('phaseBadge')
-    const potDisplay = $('potDisplay')
-    const potCenter = $('potCenter')
-    const potChips = $('potChips')
-    const myChipsDisplay = $('myChipsDisplay')
-    const opponentsRow = $('opponentsRow')
-    const myCards = $('myCards')
-    const handLabel = $('handLabel')
-    const gameMessage = $('gameMessage')
-    const betControls = $('betControls')
-    const bluffControls = $('bluffControls')
-    const callBluffControls = $('callBluffControls')
-    const bluffClaims = $('bluffClaims')
-    const actionLog = $('actionLog')
-    const resultsOverlay = $('resultsOverlay')
-    const resultsTitle = $('resultsTitle')
-    const resultsBody = $('resultsBody')
-    const nextRoundBtn = $('nextRoundBtn')
-    const backToLobbyBtn = $('backToLobbyBtn')
+    /* ===== CONFETTI ===== */
+    const confettiCtx = confettiCanvas.getContext('2d')
+    let confettiParticles = []
+    let confettiRunning = false
+    function resizeConfetti() {
+      confettiCanvas.width = window.innerWidth
+      confettiCanvas.height = window.innerHeight
+    }
+    window.addEventListener('resize', resizeConfetti)
+    resizeConfetti()
 
-    /* ========== STATE ========== */
-    let me = null
-    let sessionId = crypto.randomUUID()
-    let currentGame = null
-    let myHand = null
-    let allHands = []
-    let allPlayers = []
-    let gamePlayers = []
-    let gameActions = []
-    let gameBluffs = []
-    let subscriptions = []
-
-    /* --- AI STATE --- */
-    let isAIGame = false
-    let aiDifficulty = 'medium'
-    let aiPlayer = null
-    let aiHand = null
-    let aiBluff = null
-    let localGame = null
-    let localMyHand = null
-    let localAIHand = null
-    let localBluffs = []
-    let localActions = []
-    let aiThinking = false
-
-    const AI_NAMES = {
-      easy: '😎 Easy Bot',
-      medium: '🧠 Medium Bot',
-      hard: '🔥 Hard Bot',
-      chaos: '🃏 Chaos Bot'
+    function launchConfetti(duration = 2500) {
+      const colors = ['#f0c040','#22c55e','#ef4444','#3b82f6','#a855f7','#ec4899','#f97316']
+      confettiParticles = []
+      for (let i = 0; i < 120; i++) {
+        confettiParticles.push({
+          x: Math.random() * confettiCanvas.width,
+          y: Math.random() * confettiCanvas.height - confettiCanvas.height,
+          w: Math.random() * 8 + 4,
+          h: Math.random() * 6 + 3,
+          color: colors[Math.floor(Math.random() * colors.length)],
+          vx: (Math.random() - 0.5) * 4,
+          vy: Math.random() * 3 + 2,
+          rot: Math.random() * 360,
+          rotV: (Math.random() - 0.5) * 10,
+          opacity: 1
+        })
+      }
+      confettiRunning = true
+      const start = performance.now()
+      function animate(time) {
+        if (!confettiRunning) return
+        const elapsed = time - start
+        confettiCtx.clearRect(0, 0, confettiCanvas.width, confettiCanvas.height)
+        let alive = 0
+        confettiParticles.forEach(p => {
+          p.x += p.vx
+          p.y += p.vy
+          p.rot += p.rotV
+          p.vy += 0.05
+          if (elapsed > duration - 600) p.opacity = Math.max(0, p.opacity - 0.02)
+          if (p.opacity <= 0 || p.y > confettiCanvas.height + 20) return
+          alive++
+          confettiCtx.save()
+          confettiCtx.translate(p.x, p.y)
+          confettiCtx.rotate(p.rot * Math.PI / 180)
+          confettiCtx.globalAlpha = p.opacity
+          confettiCtx.fillStyle = p.color
+          confettiCtx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h)
+          confettiCtx.restore()
+        })
+        if (alive > 0 && elapsed < duration + 800) {
+          requestAnimationFrame(animate)
+        } else {
+          confettiRunning = false
+          confettiCtx.clearRect(0, 0, confettiCanvas.width, confettiCanvas.height)
+        }
+      }
+      requestAnimationFrame(animate)
     }
 
-    /* ========== UTILS ========== */
-    function showView(name) {
-      Object.entries(views).forEach(([k, el]) => el.classList.toggle('active', k === name))
+    /* ===== PHASE BANNER ===== */
+    function showPhaseBanner(text) {
+      phaseBanner.classList.remove('show')
+      phaseBannerText.textContent = text
+      void phaseBanner.offsetWidth
+      phaseBanner.classList.add('show')
+      setTimeout(() => phaseBanner.classList.remove('show'), 2000)
     }
 
-    function escapeHtml(s) {
-      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+    /* ===== ANIMATED CHIP COUNT ===== */
+    function animateChipCount(el, from, to, duration = 600) {
+      const start = performance.now()
+      const diff = to - from
+      if (diff === 0) return
+      el.classList.add('counting')
+      function step(time) {
+        const elapsed = time - start
+        const progress = Math.min(elapsed / duration, 1)
+        const eased = 1 - Math.pow(1 - progress, 3)
+        el.textContent = Math.round(from + diff * eased).toLocaleString()
+        if (progress < 1) requestAnimationFrame(step)
+        else {
+          el.textContent = to.toLocaleString()
+          setTimeout(() => el.classList.remove('counting'), 350)
+        }
+      }
+      requestAnimationFrame(step)
     }
 
-    function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
+    /* ===== MUTE ===== */
+    function updateMuteUI() {
+      const btns = [muteBtn, gameMuteBtn]
+      btns.forEach(b => {
+        if (isMuted) b.classList.add('muted')
+        else b.classList.remove('muted')
+      })
+      localStorage.setItem(LS_MUTED, isMuted)
+    }
+    updateMuteUI()
+    muteBtn.addEventListener('click', () => { isMuted = !isMuted; updateMuteUI(); playSound('click') })
+    gameMuteBtn.addEventListener('click', () => { isMuted = !isMuted; updateMuteUI(); playSound('click') })
 
-    /* ========== CARD & HAND LOGIC ========== */
-    const SUITS = ['♥', '♦', '♣', '♠']
-    const VALUES = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
-    const VAL_MAP = { '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 14 }
+    /* ===== SCREEN NAV ===== */
+    function showScreen(name) {
+      const screens = { join: joinScreen, lobby: lobbyScreen, game: gameScreen }
+      Object.entries(screens).forEach(([key, el]) => {
+        if (key === name) {
+          el.classList.remove('exit-up', 'exit-down')
+          el.classList.add('active')
+        } else {
+          if (el.classList.contains('active')) {
+            el.classList.remove('active')
+            el.classList.add('exit-up')
+          }
+        }
+      })
+    }
 
+    /* ===== DECK ===== */
+    const SUITS = ['♠','♥','♦','♣']
+    const RANKS = ['2','3','4','5','6','7','8','9','10','J','Q','K','A']
     function newDeck() {
       const d = []
-      for (const s of SUITS) for (const v of VALUES) d.push({ value: v, suit: s })
+      for (const s of SUITS) for (const r of RANKS) d.push({ suit: s, rank: r })
       return d
     }
-
-    function shuffle(arr) {
-      for (let i = arr.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [arr[i], arr[j]] = [arr[j], arr[i]]
+    function shuffleDeck(deck) {
+      for (let i = deck.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1))
+        ;[deck[i], deck[j]] = [deck[j], deck[i]]
       }
-      return arr
+      return deck
     }
+    function cardColor(suit) { return (suit === '♥' || suit === '♦') ? 'card-red' : 'card-black' }
 
-    function isRed(suit) { return suit === '♥' || suit === '♦' }
-
+    /* ===== HAND EVAL ===== */
+    const RANK_VALUES = { '2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'10':10,'J':11,'Q':12,'K':13,'A':14 }
     function evaluateHand(cards) {
-      if (!cards || cards.length < 3) return { rank: 0, name: 'Unknown' }
-      const vals = cards.map(c => VAL_MAP[c.value]).sort((a, b) => b - a)
-      const suits = cards.map(c => c.suit)
-
-      const isFlush = suits[0] === suits[1] && suits[1] === suits[2]
-      const sorted = [...vals].sort((a, b) => a - b)
-      const isStraight = (sorted[2] - sorted[1] === 1 && sorted[1] - sorted[0] === 1) ||
-        (sorted[0] === 2 && sorted[1] === 3 && sorted[2] === 14)
-
-      const counts = {}
-      vals.forEach(v => { counts[v] = (counts[v] || 0) + 1 })
-      const freqs = Object.values(counts).sort((a, b) => b - a)
-
-      if (isFlush && isStraight) return { rank: 7, name: 'Straight Flush' }
-      if (isFlush) return { rank: 6, name: 'Flush' }
-      if (isStraight) return { rank: 5, name: 'Straight' }
-      if (freqs[0] === 3) return { rank: 4, name: 'Three of a Kind' }
-      if (freqs[0] === 2) return { rank: 2, name: 'Pair' }
-      return { rank: 1, name: 'High Card' }
-    }
-
-    const RANK_NAMES = { 1: 'High Card', 2: 'Pair', 3: 'Two Pair', 4: 'Three of a Kind', 5: 'Straight', 6: 'Flush', 7: 'Straight Flush' }
-
-    function cardHtml(card, small = false) {
-      if (small) {
-        const red = isRed(card.suit)
-        return `<div class="mini-card revealed ${red ? 'red' : ''}">${card.value}${card.suit}</div>`
-      }
-      const red = isRed(card.suit)
-      return `
-        <div class="card ${red ? 'red' : 'black'}" style="animation-delay:${Math.random() * 0.2}s">
-          <span class="card-value">${card.value}</span>
-          <span class="card-suit">${card.suit}</span>
-        </div>
-      `
-    }
-
-    function chipVisuals(amount) {
-      let html = ''
-      const denominations = [100, 50, 25, 10]
-      let remaining = amount
-      for (const d of denominations) {
-        while (remaining >= d && html.split('chip-visual').length <= 12) {
-          html += `<div class="chip-visual chip-${d}">${d}</div>`
-          remaining -= d
+      if (!cards || cards.length < 2) return { rank: 0, name: 'No Hand', score: 0 }
+      const sorted = [...cards].sort((a, b) => RANK_VALUES[b.rank] - RANK_VALUES[a.rank])
+      const ranks = sorted.map(c => RANK_VALUES[c.rank])
+      const suits = sorted.map(c => c.suit)
+      const rankCounts = {}
+      ranks.forEach(r => { rankCounts[r] = (rankCounts[r] || 0) + 1 })
+      const counts = Object.values(rankCounts).sort((a, b) => b - a)
+      const uniqueRanks = Object.keys(rankCounts).map(Number).sort((a, b) => b - a)
+      const isFlush = cards.length >= 5 && new Set(suits).size === 1
+      let isStraight = false
+      if (uniqueRanks.length >= 5) {
+        for (let i = 0; i <= uniqueRanks.length - 5; i++) {
+          if (uniqueRanks[i] - uniqueRanks[i + 4] === 4) { isStraight = true; break }
+        }
+        if (!isStraight && uniqueRanks.includes(14)) {
+          const low = uniqueRanks.filter(r => r <= 5)
+          if (low.length >= 4 && low[0] === 5 && low[low.length - 1] === 2) isStraight = true
         }
       }
-      return html
+      let rank, name, score
+      if (isFlush && isStraight && uniqueRanks[0] === 14) { rank = 9; name = 'Royal Flush'; score = 9000 }
+      else if (isFlush && isStraight) { rank = 8; name = 'Straight Flush'; score = 8000 + uniqueRanks[0] }
+      else if (counts[0] === 4) { rank = 7; name = 'Four of a Kind'; score = 7000 + maxRankWithCount(rankCounts, 4) }
+      else if (counts[0] === 3 && counts[1] >= 2) { rank = 6; name = 'Full House'; score = 6000 + maxRankWithCount(rankCounts, 3) * 15 + maxRankWithCount(rankCounts, 2) }
+      else if (isFlush) { rank = 5; name = 'Flush'; score = 5000 + uniqueRanks[0] }
+      else if (isStraight) { rank = 4; name = 'Straight'; score = 4000 + uniqueRanks[0] }
+      else if (counts[0] === 3) { rank = 3; name = 'Three of a Kind'; score = 3000 + maxRankWithCount(rankCounts, 3) }
+      else if (counts[0] === 2 && counts[1] === 2) { rank = 2; name = 'Two Pair'; score = 2000 + uniqueRanks[0] }
+      else if (counts[0] === 2) { rank = 1; name = 'One Pair'; score = 1000 + maxRankWithCount(rankCounts, 2) }
+      else { rank = 0; name = 'High Card'; score = uniqueRanks[0] }
+      return { rank, name, score }
+      function maxRankWithCount(rc, c) {
+        return Math.max(...Object.entries(rc).filter(([, v]) => v === c).map(([k]) => Number(k)))
+      }
     }
 
-    /* ========== MUTE TOGGLE ========== */
-    muteBtn.addEventListener('click', () => {
-      isMuted = !isMuted
-      muteBtn.classList.toggle('muted', isMuted)
-      SFX.click()
+    /* ===== JOIN ===== */
+    nameInput.addEventListener('input', () => {
+      joinBtn.disabled = nameInput.value.trim().length < 2
     })
 
-    /* ========== USER PERSISTENCE ========== */
-    async function tryAutoLogin() {
-      const savedId = localStorage.getItem('bluff_poker_player_id')
-      const savedName = localStorage.getItem('bluff_poker_name')
-
-      if (savedName) {
-        nameInput.value = savedName
-      }
-
-      if (!savedId) return false
-
+    joinBtn.addEventListener('click', async () => {
+      const name = nameInput.value.trim()
+      if (name.length < 2) return
+      playSound('click')
+      joinBtn.disabled = true
+      joinBtn.querySelector('span').textContent = 'Joining…'
       try {
-        joinStatus.textContent = 'Reconnecting...'
-        const { data, error } = await supabase
-          .from(T_PLAYERS)
-          .select('*')
-          .eq('id', savedId)
-          .single()
-
-        if (error || !data) {
-          // Player was deleted or doesn't exist
-          localStorage.removeItem('bluff_poker_player_id')
-          localStorage.removeItem('bluff_poker_name')
-          joinStatus.textContent = ''
-          return false
-        }
-
-        // Update player to online
-        const { data: updated, error: updateErr } = await supabase
-          .from(T_PLAYERS)
-          .update({
-            is_online: true,
-            session_id: sessionId,
-            last_seen: new Date().toISOString()
-          })
-          .eq('id', savedId)
-          .select()
-          .single()
-
-        if (updateErr || !updated) {
-          joinStatus.textContent = ''
-          return false
-        }
-
-        me = updated
-        joinStatus.textContent = ''
-        return true
+        const sessionId = crypto.randomUUID()
+        const { data, error } = await supabase.from(P_TABLE).insert({
+          display_name: name, chips: 1000, session_id: sessionId,
+          is_online: true, wins: 0, losses: 0, total_earnings: 0
+        }).select().single()
+        if (error) throw error
+        playerId = data.id
+        playerName = name
+        localStorage.setItem(LS_PLAYER_ID, playerId)
+        localStorage.setItem(LS_NAME, name)
+        showScreen('lobby')
+        showToast(`Welcome, ${name}! 🎰`, 'success', '🃏')
+        initLobby()
       } catch (err) {
-        console.warn('Auto-login failed:', err.message)
-        joinStatus.textContent = ''
+        console.error('Join error:', err)
+        showToast('Failed to join. Try again.', 'error', '❌')
+        joinBtn.disabled = false
+        joinBtn.querySelector('span').textContent = 'Join the Table'
+      }
+    })
+
+    /* ===== AUTO-LOGIN ===== */
+    async function tryAutoLogin() {
+      const savedId = localStorage.getItem(LS_PLAYER_ID)
+      const savedName = localStorage.getItem(LS_NAME)
+      if (!savedId || !savedName) return false
+      try {
+        const { data, error } = await supabase.from(P_TABLE)
+          .select('*').eq('id', savedId).single()
+        if (error || !data) {
+          localStorage.removeItem(LS_PLAYER_ID)
+          localStorage.removeItem(LS_NAME)
+          localStorage.removeItem(LS_GAME_ID)
+          return false
+        }
+        await supabase.from(P_TABLE).update({
+          is_online: true, last_seen: new Date().toISOString()
+        }).eq('id', savedId)
+        playerId = savedId
+        playerName = savedName
+        nameInput.value = savedName
+
+        /* Check if was in a game */
+        const savedGameId = localStorage.getItem(LS_GAME_ID)
+        if (savedGameId && data.current_game_id) {
+          const { data: gData } = await supabase.from(G_TABLE)
+            .select('*').eq('id', savedGameId).single()
+          if (gData && (gData.status === 'playing' || gData.status === 'waiting')) {
+            currentGameId = savedGameId
+            showScreen('game')
+            showToast('Reconnected to your game!', 'info', '🔄')
+            initGameSubscriptions()
+            await refreshGameState()
+            return true
+          }
+        }
+
+        showScreen('lobby')
+        showToast(`Welcome back, ${savedName}!`, 'success', '👋')
+        initLobby()
+        return true
+      } catch (e) {
+        console.warn('Auto-login failed:', e.message)
         return false
       }
     }
 
-    /* ========== JOIN ========== */
-    joinForm.addEventListener('submit', async (e) => {
-      e.preventDefault()
-      try {
-        const name = nameInput.value.trim()
-        if (!name || name.length < 2) {
-          joinStatus.textContent = 'Name must be at least 2 characters.'
-          return
-        }
-        joinStatus.textContent = 'Joining...'
-        SFX.click()
-
-        // Check if name taken by another online player
-        const { data: existing } = await supabase
-          .from(T_PLAYERS)
-          .select('id, session_id, is_online')
-          .eq('display_name', name)
-          .eq('is_online', true)
-          .limit(1)
-
-        if (existing && existing.length > 0) {
-          joinStatus.textContent = 'That name is already taken. Try another.'
-          return
-        }
-
-        // Insert new player
-        const { data: player, error } = await supabase
-          .from(T_PLAYERS)
-          .insert({
-            display_name: name,
-            session_id: sessionId,
-            chips: 500,
-            is_online: true,
-            wins: 0,
-            losses: 0,
-            total_earnings: 0,
-            current_game_id: null,
-            last_seen: new Date().toISOString()
-          })
-          .select()
-          .single()
-
-        if (error) throw error
-        me = player
-
-        // Save to localStorage for persistence
-        localStorage.setItem('bluff_poker_player_id', me.id)
-        localStorage.setItem('bluff_poker_name', name)
-
-        joinStatus.textContent = ''
-        showView('lobby')
-        startLobby()
-      } catch (err) {
-        console.error('Join error:', err.message, err.stack)
-        joinStatus.textContent = err.message || 'Failed to join.'
-      }
-    })
-
-    /* ========== LOBBY ========== */
-    async function startLobby() {
-      await loadLobbyPlayers()
+    /* ===== LOBBY ===== */
+    async function initLobby() {
+      playerNameTag.textContent = playerName
       await loadLeaderboard()
+      await loadLobbyPlayers()
 
-      const playerSub = supabase.channel('lobby-players')
-        .on('postgres_changes', { event: '*', schema: 'public', table: T_PLAYERS }, () => {
+      if (lobbyChannel) supabase.removeChannel(lobbyChannel)
+      lobbyChannel = supabase.channel('lobby-players')
+        .on('postgres_changes', { event: '*', schema: 'public', table: P_TABLE }, () => {
           loadLobbyPlayers()
           loadLeaderboard()
         })
         .subscribe()
-      subscriptions.push(playerSub)
-
-      const gameSub = supabase.channel('lobby-games')
-        .on('postgres_changes', { event: '*', schema: 'public', table: T_GAMES }, (payload) => {
-          if (payload.new && payload.new.status === 'active' && me.current_game_id === null) {
-            checkIfInGame(payload.new)
-          }
-        })
-        .subscribe()
-      subscriptions.push(gameSub)
     }
 
     async function loadLobbyPlayers() {
       try {
-        const { data } = await supabase
-          .from(T_PLAYERS)
-          .select('*')
-          .eq('is_online', true)
-          .order('last_seen', { ascending: false })
-
-        allPlayers = data || []
-        renderLobbyPlayers()
-        startGameBtn.disabled = allPlayers.length < 2
-      } catch (err) {
-        console.error('Load players error:', err.message)
-      }
-    }
-
-    function renderLobbyPlayers() {
-      playersGrid.innerHTML = allPlayers.map(p => `
-        <div class="player-card">
-          <div class="player-avatar">${escapeHtml(p.display_name.charAt(0).toUpperCase())}</div>
-          <div class="player-name">${escapeHtml(p.display_name)}${p.id === me.id ? ' (you)' : ''}</div>
-          <div class="player-chips">🪙 ${p.chips} chips</div>
-        </div>
-      `).join('')
+        const { data } = await supabase.from(P_TABLE)
+          .select('*').eq('is_online', true)
+          .order('chips', { ascending: false }).limit(20)
+        if (!data) return
+        lobbyPlayers.innerHTML = ''
+        data.forEach((p, i) => {
+          const isMe = p.id === playerId
+          const card = document.createElement('div')
+          card.className = 'lobby-player-card'
+          card.style.animationDelay = `${i * 0.07}s`
+          card.innerHTML = `
+            <div class="lobby-player-avatar">${p.display_name.charAt(0).toUpperCase()}</div>
+            <div class="lobby-player-info">
+              <div class="lobby-player-name">${esc(p.display_name)}${isMe ? ' (You)' : ''}</div>
+              <div class="lobby-player-stat">🪙 ${p.chips.toLocaleString()} · W${p.wins} / L${p.losses}</div>
+            </div>
+            <span class="lobby-player-badge online">Online</span>
+          `
+          lobbyPlayers.appendChild(card)
+        })
+        lobbySub.textContent = `${data.length} player${data.length !== 1 ? 's' : ''} online`
+        startGameBtn.disabled = data.length < 2
+      } catch (e) { console.warn('Lobby load error:', e.message) }
     }
 
     async function loadLeaderboard() {
       try {
-        const { data } = await supabase
-          .from(T_PLAYERS)
-          .select('display_name, chips, wins, losses')
-          .order('chips', { ascending: false })
-          .limit(10)
-
-        leaderboardList.innerHTML = (data || []).map((p, i) => `
-          <div class="lb-row">
-            <div class="lb-rank ${i === 0 ? 'gold' : ''}">${i + 1}</div>
-            <div class="lb-name">${escapeHtml(p.display_name)}</div>
-            <div class="lb-chips">🪙 ${p.chips}</div>
-            <div class="lb-record">${p.wins}W / ${p.losses}L</div>
-          </div>
-        `).join('')
-      } catch (err) {
-        console.error('Leaderboard error:', err.message)
-      }
+        const { data } = await supabase.from(P_TABLE)
+          .select('display_name, chips, wins')
+          .order('chips', { ascending: false }).limit(10)
+        if (!data) return
+        leaderboardList.innerHTML = data.map((p, i) => {
+          const rankClass = i === 0 ? 'top-1' : i === 1 ? 'top-2' : i === 2 ? 'top-3' : ''
+          const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`
+          return `<div class="lb-row"><span class="lb-rank ${rankClass}">${medal}</span><span class="lb-name">${esc(p.display_name)}</span><span class="lb-chips">🪙 ${p.chips.toLocaleString()}</span></div>`
+        }).join('')
+      } catch (e) { /* ok */ }
     }
 
-    /* ========== START MULTIPLAYER GAME ========== */
+    /* ===== LEAVE LOBBY ===== */
+    leaveBtn.addEventListener('click', async () => {
+      playSound('click')
+      if (lobbyChannel) { supabase.removeChannel(lobbyChannel); lobbyChannel = null }
+      await supabase.from(P_TABLE).update({ is_online: false }).eq('id', playerId)
+      localStorage.removeItem(LS_PLAYER_ID)
+      localStorage.removeItem(LS_NAME)
+      localStorage.removeItem(LS_GAME_ID)
+      playerId = null
+      playerName = ''
+      nameInput.value = ''
+      showScreen('join')
+      showToast('Left the lobby', 'info', '👋')
+    })
+
+    /* ===== START MULTIPLAYER ===== */
     startGameBtn.addEventListener('click', async () => {
+      playSound('click')
+      startGameBtn.disabled = true
       try {
-        startGameBtn.disabled = true
-        SFX.click()
-        const gameId = crypto.randomUUID()
-
-        const { data: online } = await supabase
-          .from(T_PLAYERS)
-          .select('id, display_name, chips')
-          .eq('is_online', true)
-
-        if (!online || online.length < 2) {
+        const { data: onlinePlayers } = await supabase.from(P_TABLE)
+          .select('id').eq('is_online', true).limit(6)
+        if (!onlinePlayers || onlinePlayers.length < 2) {
+          showToast('Need at least 2 players!', 'warning', '⚠️')
           startGameBtn.disabled = false
           return
         }
-
-        const playerIds = online.map(p => p.id)
-        const turnOrder = shuffle([...playerIds])
-
-        const { error: gameErr } = await supabase.from(T_GAMES).insert({
-          game_id: gameId,
-          status: 'active',
-          phase: 'betting',
-          pot: 0,
-          current_bet: 0,
-          current_turn_player_id: turnOrder[0],
-          turn_order: turnOrder,
-          turn_index: 0,
-          round_number: 1,
-          created_by: me.id
+        const gameId = crypto.randomUUID()
+        const turnOrder = onlinePlayers.map(p => p.id)
+        const { error: gErr } = await supabase.from(G_TABLE).insert({
+          game_id: gameId, status: 'playing', phase: 'deal', pot: 0,
+          current_bet: 0, current_turn_player_id: turnOrder[0],
+          turn_order: turnOrder, turn_index: 0, round_number: 1, created_by: playerId
         })
-        if (gameErr) throw gameErr
+        if (gErr) throw gErr
 
-        const deck = shuffle(newDeck())
-        let cardIdx = 0
-        for (const pid of playerIds) {
-          const hand = [deck[cardIdx++], deck[cardIdx++], deck[cardIdx++]]
-          const eval_ = evaluateHand(hand)
-          await supabase.from(T_HANDS).insert({
-            game_id: gameId,
-            player_id: pid,
-            cards: hand,
-            hand_rank: eval_.rank,
-            hand_name: eval_.name,
-            has_folded: false,
-            bet_amount: 0,
-            has_acted: false
-          })
+        for (const p of onlinePlayers) {
+          await supabase.from(P_TABLE).update({ current_game_id: gameId }).eq('id', p.id)
         }
 
-        for (const pid of playerIds) {
-          await supabase.from(T_PLAYERS).update({ current_game_id: gameId }).eq('id', pid)
-        }
-
-        me.current_game_id = gameId
-        isAIGame = false
-        aiBadge.hidden = true
-        enterGame(gameId)
-      } catch (err) {
-        console.error('Start game error:', err.message, err.stack)
+        currentGameId = gameId
+        isAiGame = false
+        localStorage.setItem(LS_GAME_ID, gameId)
+        showScreen('game')
+        showToast('Game started!', 'success', '🎰')
+        initGameSubscriptions()
+        await dealNewRound(gameId, turnOrder)
+      } catch (e) {
+        console.error('Start game error:', e)
+        showToast('Failed to start game', 'error', '❌')
         startGameBtn.disabled = false
       }
     })
 
-    async function checkIfInGame(game) {
-      try {
-        const turnOrder = game.turn_order
-        if (turnOrder && turnOrder.includes(me.id)) {
-          const { data } = await supabase.from(T_PLAYERS).select('*').eq('id', me.id).single()
-          if (data) me = data
-          if (me.current_game_id) {
-            isAIGame = false
-            aiBadge.hidden = true
-            enterGame(me.current_game_id)
-          }
-        }
-      } catch (err) {
-        console.error('Check game error:', err.message)
-      }
-    }
-
-    /* ========== LEAVE LOBBY ========== */
-    leaveLobbyBtn.addEventListener('click', async () => {
-      try {
-        SFX.click()
-        await supabase.from(T_PLAYERS).update({ is_online: false }).eq('id', me.id)
-        cleanupSubscriptions()
-        me = null
-        showView('join')
-      } catch (err) {
-        console.error('Leave error:', err.message)
-      }
+    /* ===== AI GAME ===== */
+    aiGameBtn.addEventListener('click', () => {
+      playSound('click')
+      aiPicker.classList.remove('hidden')
     })
-
-    /* ========== AI GAME MODE ========== */
-    playAIBtn.addEventListener('click', () => {
-      SFX.click()
-      aiPicker.hidden = false
+    aiPickerCancel.addEventListener('click', () => {
+      playSound('click')
+      aiPicker.classList.add('hidden')
     })
-
-    aiCancelBtn.addEventListener('click', () => {
-      SFX.click()
-      aiPicker.hidden = true
-    })
-
-    // Difficulty button listeners
-    aiPicker.querySelectorAll('.ai-diff-btn').forEach(btn => {
+    document.querySelectorAll('.ai-diff-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        SFX.click()
-        const diff = btn.dataset.diff
-        aiPicker.hidden = true
-        startAIGame(diff)
+        playSound('click')
+        aiDifficulty = btn.dataset.diff
+        aiPicker.classList.add('hidden')
+        startAiGame()
       })
     })
 
-    function startAIGame(difficulty) {
-      isAIGame = true
-      aiDifficulty = difficulty
-      aiThinking = false
-      localBluffs = []
-      localActions = []
-
-      aiPlayer = {
-        id: 'ai-bot',
-        display_name: AI_NAMES[difficulty] || '🤖 Bot',
-        chips: 500
+    async function startAiGame() {
+      isAiGame = true
+      const aiNames = {
+        easy: ['Timid Tim', 'Gentle Gina', 'Cautious Carl'],
+        medium: ['Steady Steve', 'Balanced Beth', 'Normal Nick'],
+        hard: ['Shark', 'Viper', 'Ice Queen'],
+        chaos: ['Wildcard Willy', 'Chaos Karen', 'YOLO Pete']
       }
-
-      // Deal cards
-      const deck = shuffle(newDeck())
-      const myCards_ = [deck[0], deck[1], deck[2]]
-      const aiCards = [deck[3], deck[4], deck[5]]
-      const myEval = evaluateHand(myCards_)
-      const aiEval = evaluateHand(aiCards)
-
-      localMyHand = {
-        player_id: me.id,
-        cards: myCards_,
-        hand_rank: myEval.rank,
-        hand_name: myEval.name,
-        has_folded: false,
-        bet_amount: 0,
-        has_acted: false
-      }
-
-      localAIHand = {
-        player_id: 'ai-bot',
-        cards: aiCards,
-        hand_rank: aiEval.rank,
-        hand_name: aiEval.name,
-        has_folded: false,
-        bet_amount: 0,
-        has_acted: false
-      }
-
-      // Randomly decide who goes first
-      const meFirst = Math.random() > 0.5
-
-      localGame = {
-        game_id: 'ai-' + crypto.randomUUID(),
-        status: 'active',
-        phase: 'betting',
-        pot: 0,
-        current_bet: 0,
-        current_turn_player_id: meFirst ? me.id : 'ai-bot',
-        turn_order: meFirst ? [me.id, 'ai-bot'] : ['ai-bot', me.id],
-        turn_index: 0,
-        round_number: 1
-      }
-
-      // Mirror into the shared variables for renderGame
-      currentGame = localGame
-      myHand = localMyHand
-      allHands = [localMyHand, localAIHand]
-      gamePlayers = [me, aiPlayer]
-      gameBluffs = localBluffs
-
-      cleanupSubscriptions()
-      showView('game')
-      aiBadge.hidden = false
-      resultsOverlay.hidden = true
-      actionLog.innerHTML = ''
-
-      SFX.deal()
-      renderGame()
-
-      // If AI goes first in betting, trigger AI turn
-      if (!meFirst) {
-        aiTakeBettingTurn()
-      }
-    }
-
-    /* --- AI DECISION ENGINE --- */
-    function aiDecideBet() {
-      const hand = localAIHand
-      const rank = hand.hand_rank
-      const currentBet = localGame.current_bet
-      const myBet = hand.bet_amount
-      const callCost = Math.max(0, currentBet - myBet)
-      const chips = aiPlayer.chips
-
-      switch (aiDifficulty) {
-        case 'easy': return aiDecideEasy(rank, callCost, chips)
-        case 'medium': return aiDecideMedium(rank, callCost, chips)
-        case 'hard': return aiDecideHard(rank, callCost, chips)
-        case 'chaos': return aiDecideChaos(callCost, chips)
-        default: return aiDecideMedium(rank, callCost, chips)
-      }
-    }
-
-    function aiDecideEasy(rank, callCost, chips) {
-      // Conservative: mostly calls/checks, folds weak hands vs big bets
-      if (callCost > 0) {
-        if (rank <= 1 && callCost > 25) return { action: 'fold' }
-        if (rank <= 1 && Math.random() < 0.3) return { action: 'fold' }
-        return { action: 'call' }
-      }
-      // No bet to call — check or small bet
-      if (rank >= 4) return { action: 'bet', amount: 10 }
-      if (rank >= 2 && Math.random() < 0.3) return { action: 'bet', amount: 10 }
-      return { action: 'call' } // check
-    }
-
-    function aiDecideMedium(rank, callCost, chips) {
-      if (callCost > 0) {
-        if (rank <= 1 && callCost > 50) return { action: 'fold' }
-        if (rank <= 1 && callCost > 25 && Math.random() < 0.4) return { action: 'fold' }
-        if (rank >= 4) return { action: 'bet', amount: Math.min(25, chips) } // re-raise
-        return { action: 'call' }
-      }
-      // No bet — decide to bet or check
-      if (rank >= 5) return { action: 'bet', amount: Math.min(50, chips) }
-      if (rank >= 4) return { action: 'bet', amount: Math.min(25, chips) }
-      if (rank >= 2) return { action: 'bet', amount: Math.min(10, chips) }
-      if (Math.random() < 0.2) return { action: 'bet', amount: Math.min(10, chips) } // occasional bluff bet
-      return { action: 'call' }
-    }
-
-    function aiDecideHard(rank, callCost, chips) {
-      // Look at player's betting pattern for this round
-      const playerBet = localMyHand.bet_amount
-      const playerActed = localMyHand.has_acted
-
-      if (callCost > 0) {
-        // Player raised — analyze
-        if (rank >= 4) {
-          // Strong hand, re-raise
-          return { action: 'bet', amount: Math.min(callCost + 25, chips) }
-        }
-        if (rank >= 2) {
-          // Decent hand, call
-          if (callCost > 75 && Math.random() < 0.3) return { action: 'fold' }
-          return { action: 'call' }
-        }
-        // Weak hand
-        if (callCost > 50) return { action: 'fold' }
-        if (callCost > 25 && Math.random() < 0.5) return { action: 'fold' }
-        // Bluff raise with weak hand sometimes
-        if (Math.random() < 0.25) return { action: 'bet', amount: Math.min(callCost + 50, chips) }
-        return { action: 'call' }
-      }
-
-      // No bet to call
-      if (rank >= 5) return { action: 'bet', amount: Math.min(50, chips) }
-      if (rank >= 4) return { action: 'bet', amount: Math.min(25, chips) }
-      if (rank >= 2) return { action: 'bet', amount: Math.min(10, chips) }
-      // Bluff with nothing
-      if (Math.random() < 0.35) return { action: 'bet', amount: Math.min(25, chips) }
-      return { action: 'call' }
-    }
-
-    function aiDecideChaos(callCost, chips) {
-      const r = Math.random()
-      if (callCost > 0) {
-        if (r < 0.15) return { action: 'fold' }
-        if (r < 0.5) return { action: 'call' }
-        const amounts = [10, 25, 50, 100]
-        return { action: 'bet', amount: Math.min(amounts[Math.floor(Math.random() * amounts.length)], chips) }
-      }
-      if (r < 0.3) return { action: 'call' } // check
-      const amounts = [10, 25, 50, 100]
-      return { action: 'bet', amount: Math.min(amounts[Math.floor(Math.random() * amounts.length)], chips) }
-    }
-
-    function aiDecideBluffClaim() {
-      const actualRank = localAIHand.hand_rank
-      switch (aiDifficulty) {
-        case 'easy':
-          // Honest or slightly over-claims
-          if (Math.random() < 0.7) return actualRank
-          return Math.min(actualRank + 1, 6)
-        case 'medium':
-          // Sometimes bluffs up by 1-2 ranks
-          if (Math.random() < 0.5) return actualRank
-          return Math.min(actualRank + Math.ceil(Math.random() * 2), 6)
-        case 'hard':
-          // Strategic: bluffs high with weak hands, honest with strong
-          if (actualRank >= 4) return actualRank // no need to bluff
-          if (Math.random() < 0.5) return Math.min(actualRank + 2, 6)
-          return Math.min(actualRank + 1, 6)
-        case 'chaos':
-          // Completely random claim
-          return Math.ceil(Math.random() * 6)
-        default:
-          return actualRank
-      }
-    }
-
-    function aiDecideCallBluff(playerClaimRank) {
-      const playerActualRank = localMyHand.hand_rank // AI "knows" nothing, but difficulty affects suspicion
-      const aiRank = localAIHand.hand_rank
-
-      switch (aiDifficulty) {
-        case 'easy':
-          // Rarely calls bluffs
-          return Math.random() < 0.15
-        case 'medium':
-          // Calls if claim seems too high
-          if (playerClaimRank >= 5) return Math.random() < 0.4
-          if (playerClaimRank >= 4) return Math.random() < 0.25
-          return Math.random() < 0.1
-        case 'hard':
-          // More strategic — compares to own hand
-          if (playerClaimRank >= 5 && aiRank < 4) return Math.random() < 0.55
-          if (playerClaimRank >= 4) return Math.random() < 0.35
-          if (playerClaimRank <= 2) return Math.random() < 0.05 // why call a low claim
-          return Math.random() < 0.2
-        case 'chaos':
-          return Math.random() < 0.5
-        default:
-          return Math.random() < 0.25
-      }
-    }
-
-    /* --- AI TURN EXECUTION --- */
-    async function aiTakeBettingTurn() {
-      if (!isAIGame || localGame.phase !== 'betting') return
-      if (localAIHand.has_folded || localAIHand.has_acted) return
-
-      aiThinking = true
-      renderGame()
-
-      await sleep(1200 + Math.random() * 800)
-
-      const decision = aiDecideBet()
-      aiThinking = false
-
-      if (decision.action === 'fold') {
-        localAIHand.has_folded = true
-        localAIHand.has_acted = true
-        addLocalLog(`${aiPlayer.display_name} folds`, 'log-red')
-        SFX.fold()
-      } else if (decision.action === 'call') {
-        const callAmount = Math.max(0, localGame.current_bet - localAIHand.bet_amount)
-        const actualCall = Math.min(callAmount, aiPlayer.chips)
-        localAIHand.bet_amount += actualCall
-        localAIHand.has_acted = true
-        aiPlayer.chips -= actualCall
-        localGame.pot += actualCall
-        const label = actualCall === 0 ? 'checks' : `calls ${actualCall}`
-        addLocalLog(`${aiPlayer.display_name} ${label}`, 'log-gold')
-        SFX.bet()
-      } else if (decision.action === 'bet') {
-        const betAmount = Math.min(decision.amount, aiPlayer.chips)
-        if (betAmount <= 0) {
-          localAIHand.has_acted = true
-        } else {
-          const newBet = localAIHand.bet_amount + betAmount
-          const isRaise = newBet > localGame.current_bet
-
-          localAIHand.bet_amount = newBet
-          localAIHand.has_acted = true
-          aiPlayer.chips -= betAmount
-          localGame.pot += betAmount
-
-          if (isRaise) {
-            localGame.current_bet = newBet
-            // Reset player's has_acted so they get a chance to respond
-            localMyHand.has_acted = false
-          }
-
-          const label = isRaise ? `raises to ${newBet}` : `bets ${betAmount}`
-          addLocalLog(`${aiPlayer.display_name} ${label}`, 'log-gold')
-          SFX.bet()
-        }
-      }
-
-      aiAdvanceTurn()
-    }
-
-    function aiAdvanceTurn() {
-      const active = [localMyHand, localAIHand].filter(h => !h.has_folded)
-
-      // Only one player left
-      if (active.length <= 1) {
-        localGame.phase = 'reveal'
-        renderGame()
-        return
-      }
-
-      // Check if all acted
-      const allActed = active.every(h => h.has_acted)
-      if (allActed) {
-        localGame.phase = 'bluffing'
-        localBluffs = []
-        gameBluffs = localBluffs
-        renderGame()
-        // If AI goes first in bluff phase, let AI bluff
-        if (localGame.turn_order[0] === 'ai-bot') {
-          aiTakeBluffTurn()
-        }
-        return
-      }
-
-      // Find next player who hasn't acted
-      const turnOrder = localGame.turn_order
-      let idx = localGame.turn_index
-      for (let i = 0; i < turnOrder.length; i++) {
-        idx = (idx + 1) % turnOrder.length
-        const pid = turnOrder[idx]
-        const hand = pid === me.id ? localMyHand : localAIHand
-        if (!hand.has_folded && !hand.has_acted) {
-          localGame.current_turn_player_id = pid
-          localGame.turn_index = idx
-          renderGame()
-          if (pid === 'ai-bot') {
-            aiTakeBettingTurn()
-          }
-          return
-        }
-      }
-
-      // Fallback: everyone acted
-      localGame.phase = 'bluffing'
-      localBluffs = []
-      gameBluffs = localBluffs
-      renderGame()
-      if (localGame.turn_order[0] === 'ai-bot') {
-        aiTakeBluffTurn()
-      }
-    }
-
-    async function aiTakeBluffTurn() {
-      if (!isAIGame || localGame.phase !== 'bluffing') return
-      if (localAIHand.has_folded) return
-      // Check if AI already bluffed
-      if (localBluffs.find(b => b.player_id === 'ai-bot')) return
-
-      aiThinking = true
-      renderGame()
-
-      await sleep(1000 + Math.random() * 1000)
-
-      const claimRank = aiDecideBluffClaim()
-      aiThinking = false
-
-      const bluff = {
-        id: 'ai-bluff-' + Date.now(),
-        player_id: 'ai-bot',
-        player_name: aiPlayer.display_name,
-        claim_text: RANK_NAMES[claimRank],
-        claim_rank: claimRank,
-        called_by: null,
-        result: null
-      }
-      localBluffs.push(bluff)
-      gameBluffs = localBluffs
-
-      addLocalLog(`${aiPlayer.display_name} claims ${RANK_NAMES[claimRank]}`, 'log-purple')
-      SFX.bluff()
-
-      // Check if both have bluffed
-      checkBluffPhaseComplete()
-    }
-
-    function checkBluffPhaseComplete() {
-      const active = [localMyHand, localAIHand].filter(h => !h.has_folded)
-      const bluffCount = localBluffs.length
-      if (bluffCount >= active.length) {
-        localGame.phase = 'calling'
-        renderGame()
-        // If AI should decide whether to call player's bluff
-        aiTakeCallBluffTurn()
-      } else {
-        renderGame()
-      }
-    }
-
-    async function aiTakeCallBluffTurn() {
-      if (!isAIGame || localGame.phase !== 'calling') return
-      if (localAIHand.has_folded) return
-
-      const playerBluff = localBluffs.find(b => b.player_id === me.id && !b.called_by)
-      if (!playerBluff) return
-
-      aiThinking = true
-      renderGame()
-
-      await sleep(1500 + Math.random() * 1000)
-      aiThinking = false
-
-      const shouldCall = aiDecideCallBluff(playerBluff.claim_rank)
-
-      if (shouldCall) {
-        SFX.callBluff()
-        const actualRank = localMyHand.hand_rank
-        const claimedRank = playerBluff.claim_rank
-        const isBluffCaught = actualRank < claimedRank
-
-        playerBluff.called_by = 'ai-bot'
-        playerBluff.result = isBluffCaught ? 'caught' : 'legit'
-
-        const penalty = Math.min(localGame.pot, 200)
-
-        if (isBluffCaught) {
-          me.chips = Math.max(0, me.chips - penalty)
-          aiPlayer.chips += penalty
-          addLocalLog(`${aiPlayer.display_name} caught your bluff! You lose ${penalty} chips.`, 'log-red')
-        } else {
-          aiPlayer.chips = Math.max(0, aiPlayer.chips - penalty)
-          me.chips += penalty
-          addLocalLog(`${aiPlayer.display_name} called your bluff but you were legit! Won ${penalty} chips.`, 'log-green')
-        }
-
-        localGame.phase = 'reveal'
-        renderGame()
-      } else {
-        // AI doesn't call — go to reveal after a moment
-        addLocalLog(`${aiPlayer.display_name} lets it slide...`, 'log-purple')
-        renderGame()
-        // Don't auto-advance — let the player decide to call AI's bluff or skip
-      }
-    }
-
-    function addLocalLog(message, colorClass = '') {
-      const entry = document.createElement('div')
-      entry.className = 'log-entry'
-      entry.innerHTML = `<span class="${colorClass}">${escapeHtml(message)}</span>`
-      actionLog.prepend(entry)
-      localActions.push({ message })
-    }
-
-    /* ========== AI BETTING HANDLER (player's actions in AI mode) ========== */
-    function handleAIBet(action, amount = 0) {
-      if (!isAIGame || localGame.phase !== 'betting') return
-      if (localGame.current_turn_player_id !== me.id) return
-      if (localMyHand.has_folded || localMyHand.has_acted) return
-
-      if (action === 'fold') {
-        localMyHand.has_folded = true
-        localMyHand.has_acted = true
-        addLocalLog(`${me.display_name} folds`, 'log-red')
-        SFX.fold()
-      } else if (action === 'call') {
-        const callAmount = Math.max(0, localGame.current_bet - localMyHand.bet_amount)
-        const actualCall = Math.min(callAmount, me.chips)
-        localMyHand.bet_amount += actualCall
-        localMyHand.has_acted = true
-        me.chips -= actualCall
-        localGame.pot += actualCall
-        const label = actualCall === 0 ? 'checks' : `calls ${actualCall}`
-        addLocalLog(`${me.display_name} ${label}`, 'log-gold')
-        SFX.bet()
-      } else if (action === 'bet') {
-        const betAmount = Math.min(amount, me.chips)
-        if (betAmount <= 0) return
-        const newBet = localMyHand.bet_amount + betAmount
-        const isRaise = newBet > localGame.current_bet
-
-        localMyHand.bet_amount = newBet
-        localMyHand.has_acted = true
-        me.chips -= betAmount
-        localGame.pot += betAmount
-
-        if (isRaise) {
-          localGame.current_bet = newBet
-          localAIHand.has_acted = false // give AI chance to respond
-        }
-
-        const label = isRaise ? `raises to ${newBet}` : `bets ${betAmount}`
-        addLocalLog(`${me.display_name} ${label}`, 'log-gold')
-        SFX.bet()
-      }
-
-      aiAdvanceTurn()
-    }
-
-    function handleAIBluff(claimRank) {
-      if (!isAIGame || localGame.phase !== 'bluffing') return
-      if (localMyHand.has_folded) return
-      if (localBluffs.find(b => b.player_id === me.id)) return
-
-      const bluff = {
-        id: 'my-bluff-' + Date.now(),
-        player_id: me.id,
-        player_name: me.display_name,
-        claim_text: RANK_NAMES[claimRank],
-        claim_rank: claimRank,
-        called_by: null,
-        result: null
-      }
-      localBluffs.push(bluff)
-      gameBluffs = localBluffs
-      addLocalLog(`${me.display_name} claims ${RANK_NAMES[claimRank]}`, 'log-purple')
-      SFX.bluff()
-
-      checkBluffPhaseComplete()
-
-      // If AI hasn't bluffed yet, trigger AI bluff
-      if (!localBluffs.find(b => b.player_id === 'ai-bot') && !localAIHand.has_folded) {
-        aiTakeBluffTurn()
-      }
-    }
-
-    function handleAICallBluff(bluffId) {
-      if (!isAIGame || localGame.phase !== 'calling') return
-
-      const targetBluff = localBluffs.find(b => b.id === bluffId)
-      if (!targetBluff || targetBluff.called_by) return
-
-      SFX.callBluff()
-
-      const actualRank = localAIHand.hand_rank
-      const claimedRank = targetBluff.claim_rank
-      const isBluffCaught = actualRank < claimedRank
-
-      targetBluff.called_by = me.id
-      targetBluff.result = isBluffCaught ? 'caught' : 'legit'
-
-      const penalty = Math.min(localGame.pot, 200)
-
-      if (isBluffCaught) {
-        aiPlayer.chips = Math.max(0, aiPlayer.chips - penalty)
-        me.chips += penalty
-        addLocalLog(`You caught ${aiPlayer.display_name}'s bluff! Won ${penalty} chips.`, 'log-green')
-      } else {
-        me.chips = Math.max(0, me.chips - penalty)
-        aiPlayer.chips += penalty
-        addLocalLog(`You called ${aiPlayer.display_name}'s bluff but they were legit! Lost ${penalty} chips.`, 'log-red')
-      }
-
-      localGame.phase = 'reveal'
-      renderGame()
-    }
-
-    function handleAISkipToReveal() {
-      if (!isAIGame) return
-      localGame.phase = 'reveal'
-      renderGame()
-    }
-
-    /* ========== AI RESULTS & CLEANUP ========== */
-    async function finishAIGame(winnerId) {
-      const isWin = winnerId === me.id
-
-      if (isWin) {
-        me.chips += localGame.pot
-        SFX.win()
-      } else {
-        SFX.lose()
-      }
-
-      // Save updated chips to Supabase
-      try {
-        await supabase.from(T_PLAYERS).update({
-          chips: me.chips,
-          wins: isWin ? (me.wins || 0) + 1 : (me.wins || 0),
-          losses: isWin ? (me.losses || 0) : (me.losses || 0) + 1,
-          total_earnings: isWin ? (me.total_earnings || 0) + localGame.pot : (me.total_earnings || 0)
-        }).eq('id', me.id)
-
-        if (isWin) me.wins = (me.wins || 0) + 1
-        else me.losses = (me.losses || 0) + 1
-      } catch (err) {
-        console.warn('Failed to save AI game results:', err.message)
-      }
-
-      localGame.phase = 'finished'
-    }
-
-    /* ========== ENTER MULTIPLAYER GAME ========== */
-    async function enterGame(gameId) {
-      cleanupSubscriptions()
-      showView('game')
-      resultsOverlay.hidden = true
-      actionLog.innerHTML = ''
-
-      await refreshGameState(gameId)
-
-      const gSub = supabase.channel('game-' + gameId)
-        .on('postgres_changes', { event: '*', schema: 'public', table: T_GAMES, filter: `game_id=eq.${gameId}` }, () => {
-          refreshGameState(gameId)
+      const names = aiNames[aiDifficulty] || aiNames.medium
+      const numAI = Math.min(names.length, 3)
+      aiPlayers = []
+      for (let i = 0; i < numAI; i++) {
+        aiPlayers.push({
+          id: `ai-${i}`,
+          display_name: names[i],
+          chips: 1000,
+          is_ai: true,
+          has_folded: false,
+          bet_amount: 0,
+          cards: [],
+          hand_rank: 0,
+          hand_name: '',
+          has_acted: false
         })
-        .on('postgres_changes', { event: '*', schema: 'public', table: T_HANDS, filter: `game_id=eq.${gameId}` }, () => {
-          refreshGameState(gameId)
+      }
+
+      const gameId = `ai-${crypto.randomUUID()}`
+      currentGameId = gameId
+      localStorage.setItem(LS_GAME_ID, gameId)
+      const turnOrder = [playerId, ...aiPlayers.map(a => a.id)]
+
+      gameState = {
+        game_id: gameId, status: 'playing', phase: 'deal', pot: 0,
+        current_bet: 0, current_turn_player_id: playerId,
+        turn_order: turnOrder, turn_index: 0, round_number: 1
+      }
+
+      showScreen('game')
+      showToast(`AI Game: ${aiDifficulty.toUpperCase()} mode`, 'info', '🤖')
+      await dealAiRound()
+    }
+
+    /* ===== DEAL ===== */
+    async function dealNewRound(gameId, turnOrder) {
+      const deck = shuffleDeck(newDeck())
+      let ci = 0
+      for (const pid of turnOrder) {
+        const cards = [deck[ci++], deck[ci++], deck[ci++], deck[ci++], deck[ci++]]
+        const eval_ = evaluateHand(cards)
+        await supabase.from(H_TABLE).insert({
+          game_id: gameId, player_id: pid, cards,
+          hand_rank: eval_.rank, hand_name: eval_.name,
+          has_folded: false, bet_amount: 0, has_acted: false
         })
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: T_ACTIONS, filter: `game_id=eq.${gameId}` }, (payload) => {
-          addLogEntry(payload.new)
-          refreshGameState(gameId)
+      }
+      await supabase.from(G_TABLE).update({ phase: 'betting', current_bet: 0, turn_index: 0, current_turn_player_id: turnOrder[0] }).eq('game_id', gameId)
+      await refreshGameState()
+    }
+
+    async function dealAiRound() {
+      const deck = shuffleDeck(newDeck())
+      let ci = 0
+      const myCards = [deck[ci++], deck[ci++], deck[ci++], deck[ci++], deck[ci++]]
+      const eval_ = evaluateHand(myCards)
+      myHand = { cards: myCards, hand_rank: eval_.rank, hand_name: eval_.name, has_folded: false, bet_amount: 0, has_acted: false }
+
+      for (const ai of aiPlayers) {
+        ai.cards = [deck[ci++], deck[ci++], deck[ci++], deck[ci++], deck[ci++]]
+        const ae = evaluateHand(ai.cards)
+        ai.hand_rank = ae.rank
+        ai.hand_name = ae.name
+        ai.has_folded = false
+        ai.bet_amount = 0
+        ai.has_acted = false
+      }
+
+      gameState.phase = 'betting'
+      gameState.current_bet = 0
+      gameState.turn_index = 0
+      gameState.current_turn_player_id = playerId
+      gameState.pot = 0
+      previousChips = 0
+
+      playSound('deal')
+      showPhaseBanner('DEAL')
+      renderAiGame()
+    }
+
+    /* ===== GAME SUBSCRIPTIONS (MULTIPLAYER) ===== */
+    function initGameSubscriptions() {
+      if (gameChannel) supabase.removeChannel(gameChannel)
+      gameChannel = supabase.channel(`game-${currentGameId}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: G_TABLE, filter: `game_id=eq.${currentGameId}` }, () => refreshGameState())
+        .on('postgres_changes', { event: '*', schema: 'public', table: H_TABLE, filter: `game_id=eq.${currentGameId}` }, () => refreshGameState())
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: A_TABLE, filter: `game_id=eq.${currentGameId}` }, (payload) => {
+          const a = payload.new
+          addLogEntry(a.player_name, a.action_type, a.amount, a.message)
         })
-        .on('postgres_changes', { event: '*', schema: 'public', table: T_BLUFFS, filter: `game_id=eq.${gameId}` }, () => {
-          refreshGameState(gameId)
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: B_TABLE, filter: `game_id=eq.${currentGameId}` }, (payload) => {
+          const b = payload.new
+          renderBluffClaim(b)
         })
         .subscribe()
-      subscriptions.push(gSub)
     }
 
-    async function refreshGameState(gameId) {
+    async function refreshGameState() {
+      if (isAiGame) { renderAiGame(); return }
       try {
-        const { data: games } = await supabase
-          .from(T_GAMES).select('*').eq('game_id', gameId).limit(1)
-        if (!games || games.length === 0) return
-        currentGame = games[0]
+        const { data: gData } = await supabase.from(G_TABLE)
+          .select('*').eq('game_id', currentGameId).single()
+        if (!gData) return
+        gameState = gData
 
-        const { data: hands } = await supabase
-          .from(T_HANDS).select('*').eq('game_id', gameId)
-        allHands = hands || []
-        myHand = allHands.find(h => h.player_id === me.id)
+        const { data: hands } = await supabase.from(H_TABLE)
+          .select('*').eq('game_id', currentGameId)
+        if (!hands) return
 
-        const playerIds = currentGame.turn_order || []
-        if (playerIds.length > 0) {
-          const { data: players } = await supabase
-            .from(T_PLAYERS).select('*').in('id', playerIds)
-          gamePlayers = players || []
+        const myH = hands.find(h => h.player_id === playerId)
+        myHand = myH
+
+        if (gData.phase !== lastPhase && gData.phase !== 'deal') {
+          showPhaseBanner(gData.phase.toUpperCase())
+          lastPhase = gData.phase
         }
 
-        const { data: bluffs } = await supabase
-          .from(T_BLUFFS).select('*').eq('game_id', gameId)
-        gameBluffs = bluffs || []
-
-        const meData = gamePlayers.find(p => p.id === me.id)
-        if (meData) {
-          me.chips = meData.chips
-        }
-
-        renderGame()
-      } catch (err) {
-        console.error('Refresh game error:', err.message, err.stack)
-      }
+        renderMultiplayerGame(gData, hands)
+      } catch (e) { console.warn('Refresh error:', e.message) }
     }
 
-    /* ========== RENDER GAME (shared for multiplayer + AI) ========== */
-    function renderGame() {
-      if (!currentGame) return
-      const hand = isAIGame ? localMyHand : myHand
-      if (!hand) return
+    /* ===== RENDER MULTIPLAYER ===== */
+    function renderMultiplayerGame(gs, hands) {
+      gamePhase.textContent = gs.phase.toUpperCase()
+      gameRound.textContent = `Round ${gs.round_number}`
 
-      const phase = currentGame.phase
-      phaseBadge.textContent = phase.charAt(0).toUpperCase() + phase.slice(1)
-      potDisplay.textContent = currentGame.pot
-      potCenter.textContent = currentGame.pot
-      myChipsDisplay.textContent = me.chips
-      potChips.innerHTML = chipVisuals(currentGame.pot)
-
-      // My cards
-      if (hand.cards && Array.isArray(hand.cards)) {
-        myCards.innerHTML = hand.cards.map(c => cardHtml(c)).join('')
-        const eval_ = evaluateHand(hand.cards)
-        handLabel.textContent = eval_.name
+      const oldPot = parseInt(potAmountEl.textContent.replace(/,/g, '')) || 0
+      if (oldPot !== gs.pot) {
+        animateChipCount(potAmountEl, oldPot, gs.pot)
+        if (gs.pot > oldPot) potAmountEl.classList.add('bump')
+        setTimeout(() => potAmountEl.classList.remove('bump'), 400)
       }
 
       // Opponents
-      const opponentsList = isAIGame ? [aiPlayer] : gamePlayers.filter(p => p.id !== me.id)
-      const hands_ = isAIGame ? [localMyHand, localAIHand] : allHands
-      const isReveal = phase === 'reveal' || phase === 'finished'
-
-      opponentsRow.innerHTML = opponentsList.map(opp => {
-        const oppHand = hands_.find(h => h.player_id === opp.id)
-        const isCurrentTurn = currentGame.current_turn_player_id === opp.id
-        const folded = oppHand?.has_folded
-        const isAI = opp.id === 'ai-bot'
-        let cardsHtml = ''
-        if (isReveal && oppHand?.cards && !folded) {
-          cardsHtml = oppHand.cards.map(c => cardHtml(c, true)).join('')
-        } else {
-          cardsHtml = '<div class="mini-card"></div><div class="mini-card"></div><div class="mini-card"></div>'
-        }
-        const statusText = folded ? 'Folded' : (oppHand ? `Bet: ${oppHand.bet_amount}` : '')
-        const thinkingHtml = (aiThinking && isAI && phase === 'betting' && isCurrentTurn) || (aiThinking && isAI && (phase === 'bluffing' || phase === 'calling'))
-          ? `<div class="ai-thinking"><div class="ai-thinking-dot"></div><div class="ai-thinking-dot"></div><div class="ai-thinking-dot"></div></div>`
-          : ''
-
-        return `
-          <div class="opponent-seat ${isCurrentTurn && phase === 'betting' ? 'active-turn' : ''} ${folded ? 'folded' : ''} ${isAI ? 'ai-seat' : ''}">
-            <div class="opp-name">${escapeHtml(opp.display_name)}</div>
-            ${thinkingHtml}
-            <div class="opp-cards">${cardsHtml}</div>
-            <div class="opp-bet">${isReveal && oppHand && !folded ? oppHand.hand_name : ''}</div>
-            <div class="opp-status">${statusText}${isAI && !folded ? ` | 🪙 ${opp.chips}` : ''}</div>
-          </div>
+      opponentsRow.innerHTML = ''
+      hands.filter(h => h.player_id !== playerId).forEach(h => {
+        const isActive = gs.current_turn_player_id === h.player_id
+        const card = document.createElement('div')
+        card.className = `opponent-card${isActive ? ' active-turn' : ''}${h.has_folded ? ' folded' : ''}`
+        const showCards = gs.phase === 'showdown' || gs.status === 'finished'
+        const cardsHtml = (h.cards || []).map(c => {
+          if (showCards) return `<div class="opp-card-mini revealed ${cardColor(c.suit)}">${c.rank}${c.suit}</div>`
+          return `<div class="opp-card-mini">🂠</div>`
+        }).join('')
+        card.innerHTML = `
+          <div class="opp-name">${esc(h.player_id.substring(0, 8))}</div>
+          <div class="opp-chips">🪙 ${h.bet_amount || 0}</div>
+          <div class="opp-cards">${cardsHtml}</div>
+          ${h.has_folded ? '<div class="opp-status">Folded</div>' : ''}
+          ${h.bet_amount > 0 ? `<div class="opp-bet-badge">${h.bet_amount}</div>` : ''}
         `
-      }).join('')
+        opponentsRow.appendChild(card)
+      })
 
-      // Controls
-      betControls.hidden = true
-      bluffControls.hidden = true
-      callBluffControls.hidden = true
+      // My cards
+      renderMyCards(myHand)
 
-      if (phase === 'betting') {
-        renderBettingControls(hand)
-      } else if (phase === 'bluffing') {
-        renderBluffControls(hand)
-      } else if (phase === 'calling') {
-        renderCallingControls(hand)
-      } else if (phase === 'reveal' || phase === 'finished') {
-        gameMessage.textContent = 'Round over! Hands revealed.'
-        showResults()
+      // My chips
+      if (myHand) {
+        const { data: pData } = {} // would need player data
+        playerChipsEl.textContent = '1000' // placeholder for multiplayer
+      }
+
+      // Actions
+      const isMyTurn = gs.current_turn_player_id === playerId && !myHand?.has_folded
+      toggleActions(isMyTurn, gs)
+      if (isMyTurn) {
+        playSound('turn')
+        showToast("It's your turn!", 'warning', '🎯', 2000)
       }
     }
 
-    function renderBettingControls(hand) {
-      const isMyTurn = currentGame.current_turn_player_id === me.id
+    /* ===== RENDER AI GAME ===== */
+    function renderAiGame() {
+      if (!gameState) return
+      gamePhase.textContent = gameState.phase.toUpperCase()
+      gameRound.textContent = `Round ${gameState.round_number}`
 
-      if (isMyTurn && !hand.has_folded && !hand.has_acted) {
-        betControls.hidden = false
-        gameMessage.textContent = 'Your turn! Bet, call, or fold.'
+      const oldPot = parseInt(potAmountEl.textContent.replace(/,/g, '')) || 0
+      if (oldPot !== gameState.pot) {
+        animateChipCount(potAmountEl, oldPot, gameState.pot)
+        if (gameState.pot > oldPot) { potAmountEl.classList.add('bump'); playSound('chips') }
+        setTimeout(() => potAmountEl.classList.remove('bump'), 400)
+      }
 
-        const callBtn = betControls.querySelector('[data-action="call"]')
-        if (currentGame.current_bet > 0 && hand.bet_amount < currentGame.current_bet) {
-          const callAmount = currentGame.current_bet - hand.bet_amount
-          callBtn.textContent = `Call (${callAmount})`
-        } else {
-          callBtn.textContent = 'Check'
-        }
-      } else if (hand.has_folded) {
-        gameMessage.textContent = 'You folded this round.'
+      // Opponents
+      opponentsRow.innerHTML = ''
+      aiPlayers.forEach(ai => {
+        const isActive = gameState.current_turn_player_id === ai.id
+        const card = document.createElement('div')
+        card.className = `opponent-card${isActive ? ' active-turn' : ''}${ai.has_folded ? ' folded' : ''}`
+        const showCards = gameState.phase === 'showdown'
+        const cardsHtml = ai.cards.map(c => {
+          if (showCards) return `<div class="opp-card-mini revealed ${cardColor(c.suit)}">${c.rank}${c.suit}</div>`
+          return `<div class="opp-card-mini">🂠</div>`
+        }).join('')
+        card.innerHTML = `
+          <div class="opp-name">${esc(ai.display_name)}</div>
+          <div class="opp-chips">🪙 ${ai.chips.toLocaleString()}</div>
+          <div class="opp-cards">${cardsHtml}</div>
+          ${ai.has_folded ? '<div class="opp-status">Folded</div>' : ''}
+          ${ai.bet_amount > 0 ? `<div class="opp-bet-badge">${ai.bet_amount}</div>` : ''}
+        `
+        opponentsRow.appendChild(card)
+      })
+
+      // My cards
+      renderMyCards(myHand)
+
+      // My chips
+      const { data: pData } = {}
+      const myChips = myHand ? 1000 - (myHand.bet_amount || 0) + previousChips : 1000
+      const currentChips = parseInt(playerChipsEl.textContent.replace(/,/g, '')) || 0
+      if (currentChips !== myChips) animateChipCount(playerChipsEl, currentChips, myChips)
+      playerNameTag.textContent = playerName
+
+      // Actions
+      const isMyTurn = gameState.current_turn_player_id === playerId && !myHand?.has_folded && gameState.phase === 'betting'
+      toggleActions(isMyTurn, gameState)
+    }
+
+    function renderMyCards(hand) {
+      playerCards.innerHTML = ''
+      handLabel.textContent = ''
+      if (!hand || !hand.cards) return
+      hand.cards.forEach(c => {
+        const el = document.createElement('div')
+        el.className = `player-card ${cardColor(c.suit)}`
+        el.innerHTML = `<span class="card-rank">${c.rank}</span><span class="card-suit">${c.suit}</span>`
+        playerCards.appendChild(el)
+      })
+      if (hand.hand_name) {
+        handLabel.textContent = `✨ ${hand.hand_name}`
+      }
+      playSound('deal')
+    }
+
+    function toggleActions(enabled, gs) {
+      foldBtn.disabled = !enabled
+      callBtn.disabled = !enabled
+      raiseBtn.disabled = !enabled
+      bluffBtn.disabled = !enabled
+      if (enabled) {
+        actionBar.querySelectorAll('.action-btn').forEach(b => b.classList.add('my-turn'))
+        callBtnLabel.textContent = gs.current_bet > 0 ? `Call ${gs.current_bet}` : 'Check'
       } else {
-        if (isAIGame && aiThinking) {
-          gameMessage.textContent = `${aiPlayer.display_name} is thinking...`
-        } else {
-          const currentPlayer = gamePlayers.find(p => p.id === currentGame.current_turn_player_id)
-          gameMessage.textContent = currentPlayer
-            ? `Waiting for ${currentPlayer.display_name}...`
-            : 'Waiting...'
-        }
+        actionBar.querySelectorAll('.action-btn').forEach(b => b.classList.remove('my-turn'))
       }
     }
 
-    function renderBluffControls(hand) {
-      const bluffs = isAIGame ? localBluffs : gameBluffs
-      const myBluff = bluffs.find(b => b.player_id === me.id)
+    /* ===== PLAYER ACTIONS ===== */
+    foldBtn.addEventListener('click', () => doAction('fold'))
+    callBtn.addEventListener('click', () => doAction('call'))
+    raiseBtn.addEventListener('click', () => {
+      playSound('click')
+      raiseSliderWrap.classList.remove('hidden')
+      raiseSlider.min = (gameState.current_bet || 0) + 10
+      raiseSlider.max = 500
+      raiseSlider.value = raiseSlider.min
+      raiseValue.textContent = raiseSlider.value
+    })
+    raiseSlider.addEventListener('input', () => {
+      raiseValue.textContent = raiseSlider.value
+    })
+    raiseCancelBtn.addEventListener('click', () => {
+      playSound('click')
+      raiseSliderWrap.classList.add('hidden')
+    })
+    raiseConfirmBtn.addEventListener('click', () => {
+      pendingRaise = parseInt(raiseSlider.value)
+      raiseSliderWrap.classList.add('hidden')
+      doAction('raise', pendingRaise)
+    })
+    bluffBtn.addEventListener('click', () => doAction('bluff'))
 
-      if (!hand.has_folded && !myBluff) {
-        bluffControls.hidden = false
-        gameMessage.textContent = 'Claim your hand strength. Bluff or be honest!'
-      } else if (myBluff) {
-        if (isAIGame && aiThinking) {
-          gameMessage.textContent = `${aiPlayer.display_name} is deciding their claim...`
-        } else {
-          gameMessage.textContent = `You claimed: ${RANK_NAMES[myBluff.claim_rank] || 'Unknown'}. Waiting for others...`
-        }
-      } else {
-        gameMessage.textContent = 'You folded. Watching the bluff phase...'
-      }
-    }
+    async function doAction(type, amount = 0) {
+      playSound(type === 'fold' ? 'fold' : type === 'bluff' ? 'bluff' : 'chips')
 
-    function renderCallingControls(hand) {
-      if (!hand.has_folded) {
-        const bluffs = isAIGame ? localBluffs : gameBluffs
-        const otherBluffs = bluffs.filter(b => b.player_id !== me.id && !b.called_by)
-
-        if (otherBluffs.length > 0) {
-          callBluffControls.hidden = false
-          bluffClaims.innerHTML = otherBluffs.map(b => `
-            <div class="bluff-claim-card">
-              <div class="bluff-claim-info">
-                <div class="bluff-claim-name">${escapeHtml(b.player_name)}</div>
-                <div class="bluff-claim-text">Claims: ${RANK_NAMES[b.claim_rank] || 'Unknown'}</div>
-              </div>
-              <button class="btn btn-callbluff" data-bluff-id="${b.id}" data-target="${b.player_id}">Call Bluff!</button>
-            </div>
-          `).join('')
-
-          // Add skip button
-          const existing = callBluffControls.querySelector('.skip-reveal-btn')
-          if (!existing) {
-            const skipBtn = document.createElement('button')
-            skipBtn.className = 'btn btn-ghost skip-reveal-btn'
-            skipBtn.textContent = 'Skip to Reveal'
-            skipBtn.style.marginTop = '12px'
-            skipBtn.addEventListener('click', () => {
-              if (isAIGame) {
-                handleAISkipToReveal()
-              } else {
-                supabase.from(T_GAMES).update({ phase: 'reveal' })
-                  .eq('game_id', currentGame.game_id)
-              }
-            })
-            callBluffControls.appendChild(skipBtn)
-          }
-
-          // Attach call bluff listeners
-          bluffClaims.querySelectorAll('.btn-callbluff').forEach(btn => {
-            btn.addEventListener('click', () => {
-              if (isAIGame) {
-                handleAICallBluff(btn.dataset.bluffId)
-              } else {
-                callBluff(btn.dataset.bluffId, btn.dataset.target)
-              }
-            })
-          })
-
-          if (aiThinking) {
-            gameMessage.textContent = `${aiPlayer.display_name} is deciding...`
-          } else {
-            gameMessage.textContent = "Call someone's bluff or skip to reveal!"
-          }
-        } else {
-          gameMessage.textContent = 'No bluffs to call. Waiting for reveal...'
-          // Auto-show skip
-          if (!callBluffControls.querySelector('.skip-reveal-btn')) {
-            callBluffControls.hidden = false
-            bluffClaims.innerHTML = '<p style="color:var(--muted);font-size:0.9rem;">No outstanding bluffs to call.</p>'
-            const skipBtn = document.createElement('button')
-            skipBtn.className = 'btn btn-ghost skip-reveal-btn'
-            skipBtn.textContent = 'Skip to Reveal'
-            skipBtn.style.marginTop = '12px'
-            skipBtn.addEventListener('click', () => {
-              if (isAIGame) handleAISkipToReveal()
-              else supabase.from(T_GAMES).update({ phase: 'reveal' }).eq('game_id', currentGame.game_id)
-            })
-            callBluffControls.appendChild(skipBtn)
-          }
-        }
-      } else {
-        gameMessage.textContent = 'You folded. Watching...'
-      }
-    }
-
-    /* ========== BETTING ACTIONS (shared handler) ========== */
-    betControls.addEventListener('click', async (e) => {
-      const btn = e.target.closest('.btn-bet')
-      if (!btn || btn.disabled) return
-      const action = btn.dataset.action
-      const amount = parseInt(btn.dataset.amount) || 0
-
-      if (isAIGame) {
-        handleAIBet(action, amount)
+      if (isAiGame) {
+        handleAiGameAction(type, amount)
         return
       }
 
-      // Multiplayer betting
+      // Multiplayer action
       try {
-        betControls.querySelectorAll('.btn').forEach(b => b.disabled = true)
-
-        if (action === 'fold') {
-          await supabase.from(T_HANDS).update({ has_folded: true, has_acted: true })
-            .eq('game_id', currentGame.game_id).eq('player_id', me.id)
-          await logAction('fold', 0, `${me.display_name} folds`)
-          SFX.fold()
-        } else if (action === 'call') {
-          const callAmount = Math.max(0, currentGame.current_bet - myHand.bet_amount)
-          const actualCall = Math.min(callAmount, me.chips)
-
-          await supabase.from(T_HANDS).update({
-            bet_amount: myHand.bet_amount + actualCall,
-            has_acted: true
-          }).eq('game_id', currentGame.game_id).eq('player_id', me.id)
-
-          await supabase.from(T_PLAYERS).update({
-            chips: me.chips - actualCall
-          }).eq('id', me.id)
-
-          await supabase.from(T_GAMES).update({
-            pot: currentGame.pot + actualCall
-          }).eq('game_id', currentGame.game_id)
-
-          me.chips -= actualCall
-          const label = actualCall === 0 ? 'checks' : `calls ${actualCall}`
-          await logAction('call', actualCall, `${me.display_name} ${label}`)
-          SFX.bet()
-        } else if (action === 'bet') {
-          const betAmount = Math.min(amount, me.chips)
-          if (betAmount <= 0) return
-
-          const newBet = myHand.bet_amount + betAmount
-          const isRaise = newBet > currentGame.current_bet
-
-          await supabase.from(T_HANDS).update({
-            bet_amount: newBet,
-            has_acted: true
-          }).eq('game_id', currentGame.game_id).eq('player_id', me.id)
-
-          await supabase.from(T_PLAYERS).update({
-            chips: me.chips - betAmount
-          }).eq('id', me.id)
-
-          const updates = { pot: currentGame.pot + betAmount }
-          if (isRaise) {
-            updates.current_bet = newBet
-            const otherHands = allHands.filter(h => h.player_id !== me.id && !h.has_folded)
-            for (const h of otherHands) {
-              await supabase.from(T_HANDS).update({ has_acted: false })
-                .eq('game_id', currentGame.game_id).eq('player_id', h.player_id)
-            }
-          }
-          await supabase.from(T_GAMES).update(updates).eq('game_id', currentGame.game_id)
-
-          me.chips -= betAmount
-          const label = isRaise ? `raises to ${newBet}` : `bets ${betAmount}`
-          await logAction('bet', betAmount, `${me.display_name} ${label}`)
-          SFX.bet()
+        const actionData = {
+          game_id: currentGameId, player_id: playerId, player_name: playerName,
+          action_type: type, amount, phase: gameState.phase
         }
-
+        if (type === 'bluff') {
+          const bluffClaim = generateBluffClaim(myHand)
+          actionData.message = bluffClaim.text
+          await supabase.from(B_TABLE).insert({
+            game_id: currentGameId, player_id: playerId, player_name: playerName,
+            claim_text: bluffClaim.text, claim_rank: bluffClaim.rank
+          })
+        }
+        await supabase.from(A_TABLE).insert(actionData)
+        if (type === 'fold') {
+          await supabase.from(H_TABLE).update({ has_folded: true }).eq('game_id', currentGameId).eq('player_id', playerId)
+        } else if (type === 'call') {
+          const callAmt = gameState.current_bet || 0
+          await supabase.from(H_TABLE).update({ bet_amount: callAmt, has_acted: true }).eq('game_id', currentGameId).eq('player_id', playerId)
+          await supabase.from(G_TABLE).update({ pot: (gameState.pot || 0) + callAmt }).eq('game_id', currentGameId)
+        } else if (type === 'raise') {
+          await supabase.from(H_TABLE).update({ bet_amount: amount, has_acted: true }).eq('game_id', currentGameId).eq('player_id', playerId)
+          await supabase.from(G_TABLE).update({ pot: (gameState.pot || 0) + amount, current_bet: amount }).eq('game_id', currentGameId)
+        }
         await advanceTurn()
-      } catch (err) {
-        console.error('Bet action error:', err.message, err.stack)
-      } finally {
-        betControls.querySelectorAll('.btn').forEach(b => b.disabled = false)
+      } catch (e) {
+        console.error('Action error:', e)
+        showToast('Action failed', 'error', '❌')
       }
-    })
+    }
 
     async function advanceTurn() {
-      try {
-        const { data: hands } = await supabase
-          .from(T_HANDS).select('*').eq('game_id', currentGame.game_id)
-        allHands = hands || []
-
-        const activeHands = allHands.filter(h => !h.has_folded)
-
-        if (activeHands.length <= 1) {
-          await supabase.from(T_GAMES).update({ phase: 'reveal' })
-            .eq('game_id', currentGame.game_id)
-          return
-        }
-
-        const allActed = activeHands.every(h => h.has_acted)
-        if (allActed) {
-          await supabase.from(T_GAMES).update({ phase: 'bluffing' })
-            .eq('game_id', currentGame.game_id)
-          return
-        }
-
-        const turnOrder = currentGame.turn_order || []
-        let idx = currentGame.turn_index
-        for (let i = 0; i < turnOrder.length; i++) {
-          idx = (idx + 1) % turnOrder.length
-          const pid = turnOrder[idx]
-          const hand = allHands.find(h => h.player_id === pid)
-          if (hand && !hand.has_folded && !hand.has_acted) {
-            await supabase.from(T_GAMES).update({
-              current_turn_player_id: pid,
-              turn_index: idx
-            }).eq('game_id', currentGame.game_id)
-            return
-          }
-        }
-
-        await supabase.from(T_GAMES).update({ phase: 'bluffing' })
-          .eq('game_id', currentGame.game_id)
-      } catch (err) {
-        console.error('Advance turn error:', err.message)
+      if (isAiGame) return
+      const to = gameState.turn_order
+      let nextIdx = (gameState.turn_index + 1) % to.length
+      // Skip folded
+      let attempts = 0
+      while (attempts < to.length) {
+        const { data: h } = await supabase.from(H_TABLE)
+          .select('has_folded').eq('game_id', currentGameId).eq('player_id', to[nextIdx]).single()
+        if (h && !h.has_folded) break
+        nextIdx = (nextIdx + 1) % to.length
+        attempts++
       }
-    }
 
-    /* ========== BLUFF PHASE (shared handler) ========== */
-    bluffControls.addEventListener('click', async (e) => {
-      const btn = e.target.closest('.btn-bluff')
-      if (!btn) return
-      const claimRank = parseInt(btn.dataset.rank)
+      // Check if round should end
+      const { data: allHands } = await supabase.from(H_TABLE)
+        .select('*').eq('game_id', currentGameId)
+      const activePlayers = allHands.filter(h => !h.has_folded)
+      const allActed = activePlayers.every(h => h.has_acted)
 
-      if (isAIGame) {
-        handleAIBluff(claimRank)
+      if (activePlayers.length === 1) {
+        await endRound(activePlayers[0].player_id, 'last_standing')
+        return
+      }
+      if (allActed) {
+        await goToShowdown()
         return
       }
 
-      // Multiplayer
-      try {
-        bluffControls.querySelectorAll('.btn').forEach(b => b.disabled = true)
-        SFX.bluff()
+      await supabase.from(G_TABLE).update({
+        turn_index: nextIdx, current_turn_player_id: to[nextIdx]
+      }).eq('game_id', currentGameId)
+    }
 
-        await supabase.from(T_BLUFFS).insert({
-          game_id: currentGame.game_id,
-          player_id: me.id,
-          player_name: me.display_name,
-          claim_text: RANK_NAMES[claimRank],
-          claim_rank: claimRank
+    async function goToShowdown() {
+      await supabase.from(G_TABLE).update({ phase: 'showdown' }).eq('game_id', currentGameId)
+      setTimeout(async () => {
+        const { data: allHands } = await supabase.from(H_TABLE)
+          .select('*').eq('game_id', currentGameId)
+        const active = allHands.filter(h => !h.has_folded)
+        const best = active.reduce((best, h) => {
+          const score = evaluateHand(h.cards).score
+          return score > best.score ? { ...h, score } : best
+        }, { score: -1 })
+        await endRound(best.player_id, 'showdown')
+      }, 2000)
+    }
+
+    async function endRound(winnerId, reason) {
+      const pot = gameState.pot || 0
+      await supabase.from(G_TABLE).update({ status: 'finished', winner_id: winnerId, phase: 'finished' }).eq('game_id', currentGameId)
+
+      const isMe = winnerId === playerId
+      if (isMe) {
+        playSound('win')
+        launchConfetti(3000)
+        showToast(`You won ${pot} chips! 💰`, 'success', '🏆', 4000)
+      } else {
+        showToast('You lost this round', 'info', '😔', 3000)
+      }
+
+      showResults(winnerId, pot, reason)
+    }
+
+    function showResults(winnerId, pot, reason) {
+      resultsOverlay.classList.remove('hidden')
+      const isMe = winnerId === playerId
+      resultsEmoji.textContent = isMe ? '🏆' : '😞'
+      resultsTitle.textContent = isMe ? 'You Win!' : 'You Lost'
+      resultsDetail.textContent = isMe ? `You won ${pot} chips!` : `Better luck next time!`
+
+      if (isMe) {
+        potAmountEl.classList.add('pot-win')
+        setTimeout(() => potAmountEl.classList.remove('pot-win'), 800)
+      }
+    }
+
+    resultsNextBtn.addEventListener('click', async () => {
+      playSound('click')
+      resultsOverlay.classList.add('hidden')
+      if (isAiGame) {
+        gameState.round_number++
+        await dealAiRound()
+      } else {
+        // New round multiplayer
+        const turnOrder = gameState.turn_order
+        const newGameId = crypto.randomUUID()
+        currentGameId = newGameId
+        localStorage.setItem(LS_GAME_ID, newGameId)
+        gameState.pot = 0
+        gameState.current_bet = 0
+        gameState.round_number++
+        actionLogInner.innerHTML = ''
+
+        await supabase.from(G_TABLE).insert({
+          game_id: newGameId, status: 'playing', phase: 'deal', pot: 0,
+          current_bet: 0, current_turn_player_id: turnOrder[0],
+          turn_order: turnOrder, turn_index: 0, round_number: gameState.round_number, created_by: playerId
         })
-
-        await logAction('bluff', 0, `${me.display_name} claims ${RANK_NAMES[claimRank]}`)
-
-        const activeHands = allHands.filter(h => !h.has_folded)
-        const { data: bluffs } = await supabase
-          .from(T_BLUFFS).select('*').eq('game_id', currentGame.game_id)
-
-        if (bluffs && bluffs.length >= activeHands.length) {
-          await supabase.from(T_GAMES).update({ phase: 'calling' })
-            .eq('game_id', currentGame.game_id)
-        }
-      } catch (err) {
-        console.error('Bluff error:', err.message, err.stack)
-      } finally {
-        bluffControls.querySelectorAll('.btn').forEach(b => b.disabled = false)
+        initGameSubscriptions()
+        await dealNewRound(newGameId, turnOrder)
       }
     })
 
-    /* ========== CALL BLUFF (multiplayer only) ========== */
-    async function callBluff(bluffId, targetPlayerId) {
-      try {
-        SFX.callBluff()
-        const targetHand = allHands.find(h => h.player_id === targetPlayerId)
-        const targetBluff = gameBluffs.find(b => b.id === bluffId)
-        if (!targetHand || !targetBluff) return
+    resultsLeaveBtn.addEventListener('click', () => {
+      playSound('click')
+      leaveGame()
+    })
 
-        const actualRank = targetHand.hand_rank
-        const claimedRank = targetBluff.claim_rank
-        const isBluffCaught = actualRank < claimedRank
+    gameLeaveBtn.addEventListener('click', () => {
+      playSound('click')
+      leaveGame()
+    })
 
-        await supabase.from(T_BLUFFS).update({
-          called_by: me.id,
-          result: isBluffCaught ? 'caught' : 'legit'
-        }).eq('id', bluffId)
-
-        const penalty = Math.min(currentGame.pot, 200)
-
-        if (isBluffCaught) {
-          const targetPlayer = gamePlayers.find(p => p.id === targetPlayerId)
-          await supabase.from(T_PLAYERS).update({
-            chips: Math.max(0, (targetPlayer?.chips || 500) - penalty)
-          }).eq('id', targetPlayerId)
-
-          await supabase.from(T_PLAYERS).update({
-            chips: me.chips + penalty
-          }).eq('id', me.id)
-
-          await logAction('callbluff', penalty, `${me.display_name} caught ${targetBluff.player_name}'s bluff! Won ${penalty} chips.`)
-        } else {
-          await supabase.from(T_PLAYERS).update({
-            chips: Math.max(0, me.chips - penalty)
-          }).eq('id', me.id)
-
-          const targetPlayer = gamePlayers.find(p => p.id === targetPlayerId)
-          await supabase.from(T_PLAYERS).update({
-            chips: (targetPlayer?.chips || 500) + penalty
-          }).eq('id', targetPlayerId)
-
-          await logAction('callbluff', penalty, `${me.display_name} called ${targetBluff.player_name}'s bluff but they were legit! Lost ${penalty} chips.`)
-        }
-
-        await supabase.from(T_GAMES).update({ phase: 'reveal' })
-          .eq('game_id', currentGame.game_id)
-      } catch (err) {
-        console.error('Call bluff error:', err.message, err.stack)
-      }
+    async function leaveGame() {
+      resultsOverlay.classList.add('hidden')
+      if (gameChannel) { supabase.removeChannel(gameChannel); gameChannel = null }
+      currentGameId = null
+      isAiGame = false
+      aiPlayers = []
+      gameState = null
+      myHand = null
+      localStorage.removeItem(LS_GAME_ID)
+      actionLogInner.innerHTML = ''
+      showScreen('lobby')
+      showToast('Back to lobby', 'info', '🏠')
+      await initLobby()
     }
 
-    /* ========== RESULTS ========== */
-    function showResults() {
-      if (currentGame.phase === 'finished' && !resultsOverlay.hidden) return
-      resultsOverlay.hidden = false
-
-      const hands_ = isAIGame ? [localMyHand, localAIHand] : allHands
-      const players_ = isAIGame ? [me, aiPlayer] : gamePlayers
-
-      const activeHands = hands_.filter(h => !h.has_folded)
-      const sorted = [...activeHands].sort((a, b) => {
-        if (b.hand_rank !== a.hand_rank) return b.hand_rank - a.hand_rank
-        const aMax = Math.max(...(a.cards || []).map(c => VAL_MAP[c.value] || 0))
-        const bMax = Math.max(...(b.cards || []).map(c => VAL_MAP[c.value] || 0))
-        return bMax - aMax
-      })
-
-      const winner = sorted[0]
-      const winnerPlayer = players_.find(p => p.id === winner?.player_id)
-      const isMe = winner?.player_id === me.id
-
-      resultsTitle.textContent = isMe ? '🏆 You Win!' : `🏆 ${winnerPlayer?.display_name || 'Unknown'} Wins!`
-
-      let html = `<p class="results-winnings">Pot: 🪙 ${currentGame.pot} chips</p>`
-
-      sorted.forEach((h, i) => {
-        const p = players_.find(pl => pl.id === h.player_id)
-        const cards = (h.cards || []).map(c => `${c.value}${c.suit}`).join(' ')
-        html += `
-          <div class="results-player ${i === 0 ? 'winner' : ''}">
-            <div class="rp-name">${i === 0 ? '👑 ' : ''}${escapeHtml(p?.display_name || 'Unknown')}</div>
-            <div class="rp-hand">${h.hand_name}</div>
-            <div class="rp-cards">${cards}</div>
-          </div>
-        `
-      })
-
-      const folded = hands_.filter(h => h.has_folded)
-      folded.forEach(h => {
-        const p = players_.find(pl => pl.id === h.player_id)
-        html += `
-          <div class="results-player">
-            <div class="rp-name">${escapeHtml(p?.display_name || 'Unknown')}</div>
-            <div class="rp-hand" style="color:var(--muted);">Folded</div>
-          </div>
-        `
-      })
-
-      resultsBody.innerHTML = html
-
-      if (winner && currentGame.phase !== 'finished') {
-        if (isAIGame) {
-          finishAIGame(winner.player_id)
-        } else {
-          awardWinner(winner.player_id)
-        }
+    /* ===== AI GAME LOGIC ===== */
+    function handleAiGameAction(type, amount) {
+      if (type === 'fold') {
+        myHand.has_folded = true
+        addLogEntry(playerName, 'fold', 0)
+        showToast('You folded', 'info', '🏳️')
+        // AI wins
+        const winner = aiPlayers.find(a => !a.has_folded) || aiPlayers[0]
+        endAiRound(winner.id, 'player_folded')
+        return
       }
+
+      if (type === 'call') {
+        const callAmt = gameState.current_bet || 0
+        myHand.bet_amount = callAmt
+        gameState.pot += callAmt
+        myHand.has_acted = true
+        addLogEntry(playerName, callAmt > 0 ? 'call' : 'check', callAmt)
+        showToast(callAmt > 0 ? `Called ${callAmt}` : 'Checked', 'info', '✅', 2000)
+      } else if (type === 'raise') {
+        myHand.bet_amount = amount
+        gameState.pot += amount
+        gameState.current_bet = amount
+        myHand.has_acted = true
+        addLogEntry(playerName, 'raise', amount)
+        showToast(`Raised to ${amount}`, 'info', '🔥', 2000)
+      } else if (type === 'bluff') {
+        const claim = generateBluffClaim(myHand)
+        myHand.has_acted = true
+        addLogEntry(playerName, 'bluff', 0, claim.text)
+        showToast(`Bluffed: ${claim.text}`, 'bluff', '🎭', 3000)
+        renderBluffClaim({ player_name: playerName, claim_text: claim.text })
+      }
+
+      renderAiGame()
+
+      // AI turns
+      setTimeout(() => runAiTurns(), 800)
     }
 
-    async function awardWinner(winnerId) {
-      try {
-        const winnerPlayer = gamePlayers.find(p => p.id === winnerId)
-        if (!winnerPlayer) return
+    function runAiTurns() {
+      let delay = 0
+      for (const ai of aiPlayers) {
+        if (ai.has_folded) continue
+        delay += 900
+        setTimeout(() => {
+          const action = decideAiAction(ai)
+          gameState.current_turn_player_id = ai.id
+          renderAiGame()
 
-        const isMe = winnerId === me.id
-        if (isMe) SFX.win()
-        else SFX.lose()
-
-        await supabase.from(T_PLAYERS).update({
-          chips: winnerPlayer.chips + currentGame.pot,
-          wins: (winnerPlayer.wins || 0) + 1,
-          total_earnings: (winnerPlayer.total_earnings || 0) + currentGame.pot
-        }).eq('id', winnerId)
-
-        const losers = gamePlayers.filter(p => p.id !== winnerId)
-        for (const loser of losers) {
-          await supabase.from(T_PLAYERS).update({
-            losses: (loser.losses || 0) + 1
-          }).eq('id', loser.id)
-        }
-
-        await supabase.from(T_GAMES).update({
-          phase: 'finished',
-          winner_id: winnerId
-        }).eq('game_id', currentGame.game_id)
-      } catch (err) {
-        console.error('Award winner error:', err.message)
+          if (action.type === 'fold') {
+            ai.has_folded = true
+            addLogEntry(ai.display_name, 'fold', 0)
+            showToast(`${ai.display_name} folded`, 'info', '🏳️', 2000)
+          } else if (action.type === 'call') {
+            const callAmt = gameState.current_bet || 0
+            ai.bet_amount = callAmt
+            gameState.pot += callAmt
+            ai.has_acted = true
+            addLogEntry(ai.display_name, callAmt > 0 ? 'call' : 'check', callAmt)
+          } else if (action.type === 'raise') {
+            ai.bet_amount = action.amount
+            gameState.pot += action.amount
+            gameState.current_bet = action.amount
+            ai.has_acted = true
+            addLogEntry(ai.display_name, 'raise', action.amount)
+            showToast(`${ai.display_name} raised to ${action.amount}!`, 'warning', '🔥', 2000)
+          } else if (action.type === 'bluff') {
+            const claim = generateBluffClaim(ai)
+            ai.has_acted = true
+            addLogEntry(ai.display_name, 'bluff', 0, claim.text)
+            showToast(`${ai.display_name} bluffs!`, 'bluff', '🎭', 2500)
+            renderBluffClaim({ player_name: ai.display_name, claim_text: claim.text })
+          }
+          playSound(action.type === 'fold' ? 'fold' : 'chips')
+          renderAiGame()
+        }, delay)
       }
-    }
 
-    /* ========== NEXT ROUND / BACK TO LOBBY ========== */
-    nextRoundBtn.addEventListener('click', async () => {
-      try {
-        SFX.click()
-        resultsOverlay.hidden = true
-
-        if (isAIGame) {
-          // Start another AI game with same difficulty
-          startAIGame(aiDifficulty)
+      // After all AI acted, check round end
+      setTimeout(() => {
+        const activePlayers = aiPlayers.filter(a => !a.has_folded)
+        if (activePlayers.length === 0) {
+          endAiRound(playerId, 'all_ai_folded')
           return
         }
 
-        await supabase.from(T_PLAYERS).update({ current_game_id: null }).eq('id', me.id)
-        me.current_game_id = null
-
-        const { data } = await supabase.from(T_PLAYERS).select('*').eq('id', me.id).single()
-        if (data) me = data
-
-        cleanupSubscriptions()
-        showView('lobby')
-        startLobby()
-      } catch (err) {
-        console.error('Next round error:', err.message)
-      }
-    })
-
-    backToLobbyBtn.addEventListener('click', async () => {
-      try {
-        SFX.click()
-        resultsOverlay.hidden = true
-        isAIGame = false
-        aiBadge.hidden = true
-
-        await supabase.from(T_PLAYERS).update({ current_game_id: null }).eq('id', me.id)
-        me.current_game_id = null
-
-        const { data } = await supabase.from(T_PLAYERS).select('*').eq('id', me.id).single()
-        if (data) me = data
-
-        cleanupSubscriptions()
-        showView('lobby')
-        startLobby()
-      } catch (err) {
-        console.error('Back to lobby error:', err.message)
-      }
-    })
-
-    /* ========== ACTION LOG (multiplayer) ========== */
-    async function logAction(type, amount, message) {
-      try {
-        await supabase.from(T_ACTIONS).insert({
-          game_id: currentGame.game_id,
-          player_id: me.id,
-          player_name: me.display_name,
-          action_type: type,
-          amount: amount,
-          message: message,
-          phase: currentGame.phase
-        })
-      } catch (err) {
-        console.error('Log action error:', err.message)
-      }
-    }
-
-    function addLogEntry(action) {
-      const entry = document.createElement('div')
-      entry.className = 'log-entry'
-      const msg = escapeHtml(action.message || `${action.player_name} ${action.action_type}`)
-      let colorClass = ''
-      if (action.action_type === 'fold') colorClass = 'log-red'
-      else if (action.action_type === 'call' || action.action_type === 'bet') colorClass = 'log-gold'
-      else if (action.action_type === 'callbluff') colorClass = 'log-green'
-      else if (action.action_type === 'bluff') colorClass = 'log-purple'
-      entry.innerHTML = `<span class="${colorClass}">${msg}</span>`
-      actionLog.prepend(entry)
-    }
-
-    /* ========== CLEANUP ========== */
-    function cleanupSubscriptions() {
-      subscriptions.forEach(s => {
-        try { supabase.removeChannel(s) } catch (e) { /* ignore */ }
-      })
-      subscriptions = []
-    }
-
-    /* ========== HEARTBEAT ========== */
-    setInterval(async () => {
-      if (me) {
-        try {
-          await supabase.from(T_PLAYERS).update({
-            last_seen: new Date().toISOString(),
-            is_online: true
-          }).eq('id', me.id)
-        } catch (e) { /* ignore */ }
-      }
-    }, 15000)
-
-    /* ========== CLEANUP ON UNLOAD ========== */
-    window.addEventListener('beforeunload', () => {
-      if (me) {
-        // Use sendBeacon for a last-ditch offline marker
-        try {
-          const url = `${SUPABASE_URL}/rest/v1/${T_PLAYERS}?id=eq.${me.id}`
-          const headers = {
-            'Content-Type': 'application/json',
-            'apikey': SUPABASE_KEY,
-            'Authorization': `Bearer ${SUPABASE_KEY}`,
-            'Prefer': 'return=minimal'
-          }
-          const body = JSON.stringify({ is_online: false, last_seen: new Date().toISOString() })
-          const blob = new Blob([body], { type: 'application/json' })
-          // sendBeacon only does POST, but Supabase PATCH needs different method
-          // So we just accept this may not work perfectly
-          navigator.sendBeacon && navigator.sendBeacon(url, blob)
-        } catch (e) { /* ignore */ }
-      }
-    })
-
-    /* ========== INIT ========== */
-    async function init() {
-      try {
-        const autoLoggedIn = await tryAutoLogin()
-
-        if (autoLoggedIn) {
-          showView('lobby')
-          startLobby()
-        } else {
-          showView('join')
+        if (myHand.has_folded) {
+          endAiRound(activePlayers[0].id, 'player_folded')
+          return
         }
-      } catch (err) {
-        console.error('Init error:', err.message, err.stack)
-        joinStatus.textContent = 'Error loading. Please refresh.'
+
+        // Go to showdown
+        gameState.phase = 'showdown'
+        showPhaseBanner('SHOWDOWN')
+        renderAiGame()
+
+        setTimeout(() => {
+          // Determine winner
+          let bestScore = evaluateHand(myHand.cards).score
+          let winnerId = playerId
+          let winnerName = playerName
+
+          for (const ai of aiPlayers) {
+            if (ai.has_folded) continue
+            const score = evaluateHand(ai.cards).score
+            if (score > bestScore) {
+              bestScore = score
+              winnerId = ai.id
+              winnerName = ai.display_name
+            }
+          }
+
+          endAiRound(winnerId, 'showdown')
+        }, 2000)
+      }, delay + 600)
+    }
+
+    function endAiRound(winnerId, reason) {
+      const pot = gameState.pot || 0
+      const isMe = winnerId === playerId
+
+      if (isMe) {
+        playSound('win')
+        launchConfetti(3000)
+        showToast(`You won ${pot} chips! 💰`, 'success', '🏆', 4000)
+      } else {
+        const winnerAi = aiPlayers.find(a => a.id === winnerId)
+        playSound('fold')
+        showToast(`${winnerAi ? winnerAi.display_name : 'AI'} wins ${pot} chips`, 'error', '😔', 3000)
+      }
+
+      resultsOverlay.classList.remove('hidden')
+      resultsEmoji.textContent = isMe ? '🏆' : '😞'
+      resultsTitle.textContent = isMe ? 'You Win!' : 'You Lost'
+      resultsDetail.textContent = isMe
+        ? `You won ${pot} chips! ${reason === 'all_ai_folded' ? 'Everyone folded!' : 'Best hand wins!'}`
+        : `Better luck next round!`
+
+      if (isMe) {
+        potAmountEl.classList.add('pot-win')
+        setTimeout(() => potAmountEl.classList.remove('pot-win'), 800)
+      }
+
+      // Show all hands
+      resultsHands.innerHTML = ''
+      // Player hand
+      const myEval = evaluateHand(myHand.cards)
+      const pRow = document.createElement('div')
+      pRow.className = `results-hand-row${isMe ? ' winner' : ''}`
+      pRow.innerHTML = `<span class="rh-name">${esc(playerName)} ${isMe ? '👑' : ''}</span><span class="rh-hand">${myEval.name}</span><span class="rh-cards">${myHand.cards.map(c => `<span class="${cardColor(c.suit)}">${c.rank}${c.suit}</span>`).join(' ')}</span>`
+      resultsHands.appendChild(pRow)
+
+      for (const ai of aiPlayers) {
+        const aiEval = evaluateHand(ai.cards)
+        const isWinner = ai.id === winnerId
+        const row = document.createElement('div')
+        row.className = `results-hand-row${isWinner ? ' winner' : ''}`
+        row.innerHTML = `<span class="rh-name">${esc(ai.display_name)} ${isWinner ? '👑' : ''}${ai.has_folded ? ' (Folded)' : ''}</span><span class="rh-hand">${aiEval.name}</span><span class="rh-cards">${ai.cards.map(c => `<span class="${cardColor(c.suit)}">${c.rank}${c.suit}</span>`).join(' ')}</span>`
+        resultsHands.appendChild(row)
+      }
+    }
+
+    /* ===== AI DECISION ===== */
+    function decideAiAction(ai) {
+      const handScore = evaluateHand(ai.cards).score
+      const r = Math.random()
+
+      switch (aiDifficulty) {
+        case 'easy':
+          if (handScore < 1000) return r < 0.5 ? { type: 'fold' } : { type: 'call' }
+          return { type: 'call' }
+        case 'medium':
+          if (handScore < 500) return r < 0.35 ? { type: 'fold' } : { type: 'call' }
+          if (handScore > 3000) return r < 0.4 ? { type: 'raise', amount: Math.min(gameState.current_bet + 50, 200) } : { type: 'call' }
+          return { type: 'call' }
+        case 'hard':
+          if (handScore < 500 && r < 0.3) return { type: 'bluff' }
+          if (handScore > 2000) return { type: 'raise', amount: Math.min(gameState.current_bet + 100, 300) }
+          if (handScore < 300) return r < 0.4 ? { type: 'fold' } : { type: 'bluff' }
+          return { type: 'call' }
+        case 'chaos':
+          const actions = ['fold', 'call', 'raise', 'bluff']
+          const pick = actions[Math.floor(Math.random() * actions.length)]
+          if (pick === 'raise') return { type: 'raise', amount: Math.floor(Math.random() * 300) + 20 }
+          return { type: pick }
+        default:
+          return { type: 'call' }
+      }
+    }
+
+    /* ===== BLUFF ===== */
+    function generateBluffClaim(hand) {
+      const bluffs = [
+        { text: 'I have a Full House!', rank: 6 },
+        { text: 'Sitting on a Flush here', rank: 5 },
+        { text: 'Three of a Kind, easy', rank: 3 },
+        { text: 'I\'ve got a Straight!', rank: 4 },
+        { text: 'Two Pair, feeling good', rank: 2 },
+        { text: 'Four of a Kind! 😏', rank: 7 },
+        { text: 'Just a pair... or is it? 🤔', rank: 1 },
+        { text: 'Royal Flush, baby! 👑', rank: 9 },
+      ]
+      return bluffs[Math.floor(Math.random() * bluffs.length)]
+    }
+
+    function renderBluffClaim(bluff) {
+      bluffZone.innerHTML = `
+        <div class="bluff-claim">
+          <div class="bluff-claim-text">"${esc(bluff.claim_text)}"</div>
+          <div class="bluff-claim-by">— ${esc(bluff.player_name)}</div>
+        </div>
+      `
+      playSound('bluff')
+    }
+
+    /* ===== ACTION LOG ===== */
+    function addLogEntry(name, type, amount, message) {
+      const entry = document.createElement('div')
+      let cls = 'log-entry'
+      let text = ''
+      switch (type) {
+        case 'fold': cls += ' log-fold'; text = `<strong>${esc(name)}</strong> folded`; break
+        case 'call': cls += ' log-call'; text = `<strong>${esc(name)}</strong> called${amount ? ` ${amount}` : ''}`; break
+        case 'check': cls += ' log-call'; text = `<strong>${esc(name)}</strong> checked`; break
+        case 'raise': cls += ' log-raise'; text = `<strong>${esc(name)}</strong> raised to ${amount}`; break
+        case 'bluff': cls += ' log-bluff'; text = `<strong>${esc(name)}</strong> claims: ${esc(message || '???')}`; break
+        default: text = `<strong>${esc(name)}</strong> ${type}`; break
+      }
+      entry.className = cls
+      entry.innerHTML = text
+      actionLogInner.prepend(entry)
+      // Keep max 30
+      while (actionLogInner.children.length > 30) actionLogInner.lastChild.remove()
+    }
+
+    /* ===== UTILITY ===== */
+    function esc(str) {
+      return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')
+    }
+
+    /* ===== HEARTBEAT ===== */
+    setInterval(async () => {
+      if (playerId) {
+        try {
+          await supabase.from(P_TABLE).update({ last_seen: new Date().toISOString(), is_online: true }).eq('id', playerId)
+        } catch (e) { /* ok */ }
+      }
+    }, 30000)
+
+    /* ===== CLEANUP ON UNLOAD ===== */
+    window.addEventListener('beforeunload', () => {
+      if (playerId) {
+        navigator.sendBeacon && navigator.sendBeacon(
+          `${SUPABASE_URL}/rest/v1/${P_TABLE}?id=eq.${playerId}`,
+          ''
+        )
+      }
+    })
+
+    /* ===== INIT ===== */
+    async function init() {
+      const autoLoggedIn = await tryAutoLogin()
+      if (!autoLoggedIn) {
+        const savedName = localStorage.getItem(LS_NAME)
+        if (savedName) nameInput.value = savedName
+        showScreen('join')
       }
     }
 
@@ -1762,13 +1279,6 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 
   } catch (err) {
     console.error('App bootstrap error:', err.message, err.stack)
-    document.body.innerHTML = `
-      <div style="min-height:100vh;display:grid;place-items:center;background:#041a0e;color:white;font-family:Inter,sans-serif;padding:24px;">
-        <div style="max-width:480px;text-align:center;">
-          <h1 style="font-size:1.5rem;color:#d4a843;margin-bottom:12px;">Failed to load Bluff Poker</h1>
-          <p style="color:#8aab8a;">${err.message}</p>
-        </div>
-      </div>
-    `
+    document.body.innerHTML = `<div style="min-height:100vh;display:grid;place-items:center;background:#0b1a0f;color:#e8f5ec;font-family:Inter,sans-serif;padding:24px;"><div style="max-width:480px;text-align:center;"><h1 style="font-size:1.5rem;margin-bottom:12px;">Failed to load</h1><p style="color:#7da88a;">${err.message}</p></div></div>`
   }
 })()
