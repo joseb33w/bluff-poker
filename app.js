@@ -17,6 +17,47 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
     const LS_NAME = 'bluff_poker_name'
     const LS_MUTED = 'bluff_poker_muted'
     const LS_GAME_ID = 'bluff_poker_current_game'
+    const LS_SESSION_ID = 'bluff_poker_session_id'
+
+    /* ===== ENSURE ANONYMOUS AUTH ===== */
+    async function ensureAuth() {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session) return true
+        /* Sign up with a random email/password so RLS user_id is set */
+        const uid = crypto.randomUUID()
+        const email = `player_${uid.slice(0,8)}@bluffpoker.local`
+        const password = uid
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { emailRedirectTo: 'https://sling-gogiapp.web.app/email-confirmed.html' }
+        })
+        if (error && error.message && !error.message.includes('already')) {
+          /* Try sign in if sign up fails */
+          const saved = localStorage.getItem('bluff_poker_auth')
+          if (saved) {
+            const creds = JSON.parse(saved)
+            await supabase.auth.signInWithPassword({ email: creds.email, password: creds.password })
+          }
+          return true
+        }
+        /* Save creds for future sessions */
+        localStorage.setItem('bluff_poker_auth', JSON.stringify({ email, password }))
+        return true
+      } catch (e) {
+        console.warn('Auth setup:', e.message)
+        /* Try restoring saved creds */
+        try {
+          const saved = localStorage.getItem('bluff_poker_auth')
+          if (saved) {
+            const creds = JSON.parse(saved)
+            await supabase.auth.signInWithPassword({ email: creds.email, password: creds.password })
+          }
+        } catch (e2) { console.warn('Auth restore failed:', e2.message) }
+        return true
+      }
+    }
 
     /* ===== DOM ===== */
     const $ = id => document.getElementById(id)
@@ -72,6 +113,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
     /* ===== STATE ===== */
     let playerId = null
     let playerName = ''
+    let playerChips = 1000
     let currentGameId = null
     let isAiGame = false
     let aiDifficulty = 'medium'
@@ -83,7 +125,6 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
     let gameChannel = null
     let pendingRaise = 0
     let lastPhase = ''
-    let previousChips = 0
 
     /* ===== AUDIO ===== */
     let audioCtx = null
@@ -358,14 +399,35 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       joinBtn.disabled = true
       joinBtn.querySelector('span').textContent = 'Joining…'
       try {
-        const sessionId = crypto.randomUUID()
-        const { data, error } = await supabase.from(P_TABLE).insert({
-          display_name: name, chips: 1000, session_id: sessionId,
-          is_online: true, wins: 0, losses: 0, total_earnings: 0
-        }).select().single()
-        if (error) throw error
-        playerId = data.id
+        await ensureAuth()
+        const sessionId = localStorage.getItem(LS_SESSION_ID) || crypto.randomUUID()
+        localStorage.setItem(LS_SESSION_ID, sessionId)
+
+        /* Check if this session already has a player row */
+        const { data: existing } = await supabase.from(P_TABLE)
+          .select('*').eq('session_id', sessionId).maybeSingle()
+
+        let playerData
+        if (existing) {
+          /* Update existing player */
+          const { data, error } = await supabase.from(P_TABLE).update({
+            display_name: name, is_online: true, last_seen: new Date().toISOString()
+          }).eq('id', existing.id).select().single()
+          if (error) throw error
+          playerData = data
+        } else {
+          /* Create new player */
+          const { data, error } = await supabase.from(P_TABLE).insert({
+            display_name: name, chips: 1000, session_id: sessionId,
+            is_online: true, wins: 0, losses: 0, total_earnings: 0
+          }).select().single()
+          if (error) throw error
+          playerData = data
+        }
+
+        playerId = playerData.id
         playerName = name
+        playerChips = playerData.chips || 1000
         localStorage.setItem(LS_PLAYER_ID, playerId)
         localStorage.setItem(LS_NAME, name)
         showScreen('lobby')
@@ -373,10 +435,18 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
         initLobby()
       } catch (err) {
         console.error('Join error:', err)
-        showToast('Failed to join. Try again.', 'error', '❌')
-        joinBtn.disabled = false
-        joinBtn.querySelector('span').textContent = 'Join the Table'
+        /* If DB insert fails, still allow AI play */
+        playerId = localStorage.getItem(LS_SESSION_ID) || crypto.randomUUID()
+        playerName = name
+        playerChips = 1000
+        localStorage.setItem(LS_PLAYER_ID, playerId)
+        localStorage.setItem(LS_NAME, name)
+        showScreen('lobby')
+        showToast(`Welcome, ${name}! (Offline mode)`, 'warning', '🃏')
+        initLobby()
       }
+      joinBtn.disabled = false
+      joinBtn.querySelector('span').textContent = 'Join the Table'
     })
 
     /* ===== AUTO-LOGIN ===== */
@@ -385,26 +455,52 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       const savedName = localStorage.getItem(LS_NAME)
       if (!savedId || !savedName) return false
       try {
+        await ensureAuth()
         const { data, error } = await supabase.from(P_TABLE)
-          .select('*').eq('id', savedId).single()
+          .select('*').eq('id', savedId).maybeSingle()
         if (error || !data) {
-          localStorage.removeItem(LS_PLAYER_ID)
-          localStorage.removeItem(LS_NAME)
-          localStorage.removeItem(LS_GAME_ID)
+          /* Player row gone — but we still have name, so go to lobby with session fallback */
+          const sessionId = localStorage.getItem(LS_SESSION_ID)
+          if (sessionId) {
+            const { data: bySession } = await supabase.from(P_TABLE)
+              .select('*').eq('session_id', sessionId).maybeSingle()
+            if (bySession) {
+              await supabase.from(P_TABLE).update({
+                is_online: true, last_seen: new Date().toISOString()
+              }).eq('id', bySession.id)
+              playerId = bySession.id
+              playerName = bySession.display_name
+              playerChips = bySession.chips || 1000
+              localStorage.setItem(LS_PLAYER_ID, playerId)
+              localStorage.setItem(LS_NAME, playerName)
+              nameInput.value = playerName
+
+              showScreen('lobby')
+              showToast(`Welcome back, ${playerName}!`, 'success', '👋')
+              initLobby()
+              return true
+            }
+          }
+          /* Nothing found — prefill name and show join */
+          nameInput.value = savedName
+          joinBtn.disabled = savedName.length < 2
           return false
         }
+
         await supabase.from(P_TABLE).update({
           is_online: true, last_seen: new Date().toISOString()
         }).eq('id', savedId)
+
         playerId = savedId
-        playerName = savedName
-        nameInput.value = savedName
+        playerName = data.display_name || savedName
+        playerChips = data.chips || 1000
+        nameInput.value = playerName
 
         /* Check if was in a game */
         const savedGameId = localStorage.getItem(LS_GAME_ID)
         if (savedGameId && data.current_game_id) {
           const { data: gData } = await supabase.from(G_TABLE)
-            .select('*').eq('id', savedGameId).single()
+            .select('*').eq('id', savedGameId).maybeSingle()
           if (gData && (gData.status === 'playing' || gData.status === 'waiting')) {
             currentGameId = savedGameId
             showScreen('game')
@@ -416,11 +512,14 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
         }
 
         showScreen('lobby')
-        showToast(`Welcome back, ${savedName}!`, 'success', '👋')
+        showToast(`Welcome back, ${playerName}!`, 'success', '👋')
         initLobby()
         return true
       } catch (e) {
         console.warn('Auto-login failed:', e.message)
+        /* Prefill name even if auto-login fails */
+        nameInput.value = savedName
+        joinBtn.disabled = savedName.length < 2
         return false
       }
     }
@@ -456,7 +555,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
             <div class="lobby-player-avatar">${p.display_name.charAt(0).toUpperCase()}</div>
             <div class="lobby-player-info">
               <div class="lobby-player-name">${esc(p.display_name)}${isMe ? ' (You)' : ''}</div>
-              <div class="lobby-player-stat">🪙 ${p.chips.toLocaleString()} · W${p.wins} / L${p.losses}</div>
+              <div class="lobby-player-stat">🪙 ${(p.chips || 0).toLocaleString()} · W${p.wins || 0} / L${p.losses || 0}</div>
             </div>
             <span class="lobby-player-badge online">Online</span>
           `
@@ -476,7 +575,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
         leaderboardList.innerHTML = data.map((p, i) => {
           const rankClass = i === 0 ? 'top-1' : i === 1 ? 'top-2' : i === 2 ? 'top-3' : ''
           const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`
-          return `<div class="lb-row"><span class="lb-rank ${rankClass}">${medal}</span><span class="lb-name">${esc(p.display_name)}</span><span class="lb-chips">🪙 ${p.chips.toLocaleString()}</span></div>`
+          return `<div class="lb-row"><span class="lb-rank ${rankClass}">${medal}</span><span class="lb-name">${esc(p.display_name)}</span><span class="lb-chips">🪙 ${(p.chips || 0).toLocaleString()}</span></div>`
         }).join('')
       } catch (e) { /* ok */ }
     }
@@ -485,13 +584,13 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
     leaveBtn.addEventListener('click', async () => {
       playSound('click')
       if (lobbyChannel) { supabase.removeChannel(lobbyChannel); lobbyChannel = null }
-      await supabase.from(P_TABLE).update({ is_online: false }).eq('id', playerId)
+      try {
+        await supabase.from(P_TABLE).update({ is_online: false }).eq('id', playerId)
+      } catch (e) { /* ok */ }
+      /* Keep LS_NAME and LS_SESSION_ID so user is remembered */
       localStorage.removeItem(LS_PLAYER_ID)
-      localStorage.removeItem(LS_NAME)
       localStorage.removeItem(LS_GAME_ID)
       playerId = null
-      playerName = ''
-      nameInput.value = ''
       showScreen('join')
       showToast('Left the lobby', 'info', '👋')
     })
@@ -501,6 +600,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       playSound('click')
       startGameBtn.disabled = true
       try {
+        await ensureAuth()
         const { data: onlinePlayers } = await supabase.from(P_TABLE)
           .select('id').eq('is_online', true).limit(6)
         if (!onlinePlayers || onlinePlayers.length < 2) {
@@ -553,7 +653,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       })
     })
 
-    async function startAiGame() {
+    function startAiGame() {
       isAiGame = true
       const aiNames = {
         easy: ['Timid Tim', 'Gentle Gina', 'Cautious Carl'],
@@ -590,13 +690,18 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
         turn_order: turnOrder, turn_index: 0, round_number: 1
       }
 
+      playerChips = 1000
+      actionLogInner.innerHTML = ''
+      bluffZone.innerHTML = ''
+
       showScreen('game')
       showToast(`AI Game: ${aiDifficulty.toUpperCase()} mode`, 'info', '🤖')
-      await dealAiRound()
+      dealAiRound()
     }
 
     /* ===== DEAL ===== */
     async function dealNewRound(gameId, turnOrder) {
+      await ensureAuth()
       const deck = shuffleDeck(newDeck())
       let ci = 0
       for (const pid of turnOrder) {
@@ -612,7 +717,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       await refreshGameState()
     }
 
-    async function dealAiRound() {
+    function dealAiRound() {
       const deck = shuffleDeck(newDeck())
       let ci = 0
       const myCards = [deck[ci++], deck[ci++], deck[ci++], deck[ci++], deck[ci++]]
@@ -634,8 +739,8 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       gameState.turn_index = 0
       gameState.current_turn_player_id = playerId
       gameState.pot = 0
-      previousChips = 0
 
+      bluffZone.innerHTML = ''
       playSound('deal')
       showPhaseBanner('DEAL')
       renderAiGame()
@@ -662,7 +767,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       if (isAiGame) { renderAiGame(); return }
       try {
         const { data: gData } = await supabase.from(G_TABLE)
-          .select('*').eq('game_id', currentGameId).single()
+          .select('*').eq('game_id', currentGameId).maybeSingle()
         if (!gData) return
         gameState = gData
 
@@ -719,10 +824,8 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       renderMyCards(myHand)
 
       // My chips
-      if (myHand) {
-        const { data: pData } = {} // would need player data
-        playerChipsEl.textContent = '1000' // placeholder for multiplayer
-      }
+      playerChipsEl.textContent = playerChips.toLocaleString()
+      playerNameTag.textContent = playerName
 
       // Actions
       const isMyTurn = gs.current_turn_player_id === playerId && !myHand?.has_folded
@@ -771,8 +874,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       renderMyCards(myHand)
 
       // My chips
-      const { data: pData } = {}
-      const myChips = myHand ? 1000 - (myHand.bet_amount || 0) + previousChips : 1000
+      const myChips = playerChips - (myHand ? (myHand.bet_amount || 0) : 0)
       const currentChips = parseInt(playerChipsEl.textContent.replace(/,/g, '')) || 0
       if (currentChips !== myChips) animateChipCount(playerChipsEl, currentChips, myChips)
       playerNameTag.textContent = playerName
@@ -795,7 +897,6 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       if (hand.hand_name) {
         handLabel.textContent = `✨ ${hand.hand_name}`
       }
-      playSound('deal')
     }
 
     function toggleActions(enabled, gs) {
@@ -818,7 +919,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       playSound('click')
       raiseSliderWrap.classList.remove('hidden')
       raiseSlider.min = (gameState.current_bet || 0) + 10
-      raiseSlider.max = 500
+      raiseSlider.max = Math.max(500, (gameState.current_bet || 0) + 200)
       raiseSlider.value = raiseSlider.min
       raiseValue.textContent = raiseSlider.value
     })
@@ -846,6 +947,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 
       // Multiplayer action
       try {
+        await ensureAuth()
         const actionData = {
           game_id: currentGameId, player_id: playerId, player_name: playerName,
           action_type: type, amount, phase: gameState.phase
@@ -884,7 +986,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       let attempts = 0
       while (attempts < to.length) {
         const { data: h } = await supabase.from(H_TABLE)
-          .select('has_folded').eq('game_id', currentGameId).eq('player_id', to[nextIdx]).single()
+          .select('has_folded').eq('game_id', currentGameId).eq('player_id', to[nextIdx]).maybeSingle()
         if (h && !h.has_folded) break
         nextIdx = (nextIdx + 1) % to.length
         attempts++
@@ -930,6 +1032,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 
       const isMe = winnerId === playerId
       if (isMe) {
+        playerChips += pot
         playSound('win')
         launchConfetti(3000)
         showToast(`You won ${pot} chips! 💰`, 'success', '🏆', 4000)
@@ -958,9 +1061,10 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       resultsOverlay.classList.add('hidden')
       if (isAiGame) {
         gameState.round_number++
-        await dealAiRound()
+        dealAiRound()
       } else {
         // New round multiplayer
+        await ensureAuth()
         const turnOrder = gameState.turn_order
         const newGameId = crypto.randomUUID()
         currentGameId = newGameId
@@ -1000,6 +1104,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       myHand = null
       localStorage.removeItem(LS_GAME_ID)
       actionLogInner.innerHTML = ''
+      bluffZone.innerHTML = ''
       showScreen('lobby')
       showToast('Back to lobby', 'info', '🏠')
       await initLobby()
@@ -1039,6 +1144,8 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
         renderBluffClaim({ player_name: playerName, claim_text: claim.text })
       }
 
+      /* Disable actions while AI is thinking */
+      toggleActions(false, gameState)
       renderAiGame()
 
       // AI turns
@@ -1047,10 +1154,12 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 
     function runAiTurns() {
       let delay = 0
-      for (const ai of aiPlayers) {
-        if (ai.has_folded) continue
+      const activeAI = aiPlayers.filter(a => !a.has_folded)
+
+      for (const ai of activeAI) {
         delay += 900
         setTimeout(() => {
+          if (ai.has_folded) return
           const action = decideAiAction(ai)
           gameState.current_turn_player_id = ai.id
           renderAiGame()
@@ -1062,11 +1171,13 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
           } else if (action.type === 'call') {
             const callAmt = gameState.current_bet || 0
             ai.bet_amount = callAmt
+            ai.chips -= callAmt
             gameState.pot += callAmt
             ai.has_acted = true
             addLogEntry(ai.display_name, callAmt > 0 ? 'call' : 'check', callAmt)
           } else if (action.type === 'raise') {
             ai.bet_amount = action.amount
+            ai.chips -= action.amount
             gameState.pot += action.amount
             gameState.current_bet = action.amount
             ai.has_acted = true
@@ -1086,14 +1197,14 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 
       // After all AI acted, check round end
       setTimeout(() => {
-        const activePlayers = aiPlayers.filter(a => !a.has_folded)
-        if (activePlayers.length === 0) {
+        const stillActive = aiPlayers.filter(a => !a.has_folded)
+        if (stillActive.length === 0) {
           endAiRound(playerId, 'all_ai_folded')
           return
         }
 
         if (myHand.has_folded) {
-          endAiRound(activePlayers[0].id, 'player_folded')
+          endAiRound(stillActive[0].id, 'player_folded')
           return
         }
 
@@ -1106,7 +1217,6 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
           // Determine winner
           let bestScore = evaluateHand(myHand.cards).score
           let winnerId = playerId
-          let winnerName = playerName
 
           for (const ai of aiPlayers) {
             if (ai.has_folded) continue
@@ -1114,7 +1224,6 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
             if (score > bestScore) {
               bestScore = score
               winnerId = ai.id
-              winnerName = ai.display_name
             }
           }
 
@@ -1128,14 +1237,19 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       const isMe = winnerId === playerId
 
       if (isMe) {
+        playerChips += pot
         playSound('win')
         launchConfetti(3000)
         showToast(`You won ${pot} chips! 💰`, 'success', '🏆', 4000)
       } else {
         const winnerAi = aiPlayers.find(a => a.id === winnerId)
+        if (winnerAi) winnerAi.chips += pot
         playSound('fold')
         showToast(`${winnerAi ? winnerAi.display_name : 'AI'} wins ${pot} chips`, 'error', '😔', 3000)
       }
+
+      gameState.phase = 'finished'
+      renderAiGame()
 
       resultsOverlay.classList.remove('hidden')
       resultsEmoji.textContent = isMe ? '🏆' : '😞'
@@ -1248,7 +1362,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 
     /* ===== HEARTBEAT ===== */
     setInterval(async () => {
-      if (playerId) {
+      if (playerId && !isAiGame) {
         try {
           await supabase.from(P_TABLE).update({ last_seen: new Date().toISOString(), is_online: true }).eq('id', playerId)
         } catch (e) { /* ok */ }
@@ -1257,20 +1371,30 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 
     /* ===== CLEANUP ON UNLOAD ===== */
     window.addEventListener('beforeunload', () => {
-      if (playerId) {
-        navigator.sendBeacon && navigator.sendBeacon(
-          `${SUPABASE_URL}/rest/v1/${P_TABLE}?id=eq.${playerId}`,
-          ''
-        )
-      }
+      /* Don't clear localStorage — user should be remembered */
     })
 
     /* ===== INIT ===== */
     async function init() {
+      /* Restore saved auth session first */
+      try {
+        const savedAuth = localStorage.getItem('bluff_poker_auth')
+        if (savedAuth) {
+          const creds = JSON.parse(savedAuth)
+          const { data: { session } } = await supabase.auth.getSession()
+          if (!session) {
+            await supabase.auth.signInWithPassword({ email: creds.email, password: creds.password })
+          }
+        }
+      } catch (e) { console.warn('Session restore:', e.message) }
+
       const autoLoggedIn = await tryAutoLogin()
       if (!autoLoggedIn) {
         const savedName = localStorage.getItem(LS_NAME)
-        if (savedName) nameInput.value = savedName
+        if (savedName) {
+          nameInput.value = savedName
+          joinBtn.disabled = savedName.length < 2
+        }
         showScreen('join')
       }
     }
