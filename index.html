@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Bluff Poker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Playfair+Display:wght@700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="felt-bg"></div>
+  <div class="felt-overlay"></div>
+
+  <!-- JOIN SCREEN -->
+  <section id="joinView" class="view active">
+    <div class="join-card">
+      <div class="logo">
+        <span class="logo-icon">♠</span>
+        <h1>Bluff Poker</h1>
+        <p class="tagline">Bet big. Lie bigger.</p>
+      </div>
+      <form id="joinForm" class="join-form">
+        <input type="text" id="nameInput" placeholder="Enter your display name" maxlength="16" required autocomplete="off" />
+        <button type="submit" class="btn btn-primary" id="joinBtn">Join Lobby</button>
+      </form>
+      <p class="join-status" id="joinStatus"></p>
+    </div>
+  </section>
+
+  <!-- LOBBY -->
+  <section id="lobbyView" class="view">
+    <div class="lobby-container">
+      <div class="lobby-header">
+        <div>
+          <p class="eyebrow">♠ Bluff Poker Lobby</p>
+          <h2>Waiting for players...</h2>
+        </div>
+        <div class="lobby-actions">
+          <button class="btn btn-gold" id="startGameBtn" disabled>Start Game</button>
+          <button class="btn btn-ghost" id="leaveLobbyBtn">Leave</button>
+        </div>
+      </div>
+      <div class="players-grid" id="playersGrid"></div>
+      <div class="leaderboard-section">
+        <h3>🏆 Leaderboard</h3>
+        <div id="leaderboardList" class="leaderboard-list"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- GAME TABLE -->
+  <section id="gameView" class="view">
+    <div class="game-container">
+      <div class="game-topbar">
+        <div class="game-info">
+          <span class="phase-badge" id="phaseBadge">Betting</span>
+          <span class="pot-display">Pot: <strong id="potDisplay">0</strong></span>
+        </div>
+        <div class="my-chips">
+          <span class="chip-icon">🪙</span>
+          <strong id="myChipsDisplay">500</strong>
+        </div>
+      </div>
+
+      <!-- OPPONENTS -->
+      <div class="opponents-row" id="opponentsRow"></div>
+
+      <!-- TABLE CENTER -->
+      <div class="table-center">
+        <div class="pot-area">
+          <div class="pot-chips" id="potChips"></div>
+          <p class="pot-label">Pot: <span id="potCenter">0</span></p>
+        </div>
+        <div class="game-message" id="gameMessage"></div>
+      </div>
+
+      <!-- MY HAND -->
+      <div class="my-hand-area">
+        <div class="my-cards" id="myCards"></div>
+        <p class="hand-label" id="handLabel">Your Hand</p>
+      </div>
+
+      <!-- BETTING CONTROLS -->
+      <div class="controls-area" id="controlsArea">
+        <div class="bet-controls" id="betControls" hidden>
+          <button class="btn btn-bet" data-action="fold">Fold</button>
+          <button class="btn btn-bet" data-action="call">Call</button>
+          <button class="btn btn-bet btn-raise" data-action="bet" data-amount="10">10</button>
+          <button class="btn btn-bet btn-raise" data-action="bet" data-amount="25">25</button>
+          <button class="btn btn-bet btn-raise" data-action="bet" data-amount="50">50</button>
+          <button class="btn btn-bet btn-raise" data-action="bet" data-amount="100">100</button>
+        </div>
+        <div class="bluff-controls" id="bluffControls" hidden>
+          <p class="bluff-prompt">Claim how strong your hand is:</p>
+          <div class="bluff-options">
+            <button class="btn btn-bluff" data-rank="1">High Card</button>
+            <button class="btn btn-bluff" data-rank="2">Pair</button>
+            <button class="btn btn-bluff" data-rank="3">Two Pair</button>
+            <button class="btn btn-bluff" data-rank="4">Three of a Kind</button>
+            <button class="btn btn-bluff" data-rank="5">Straight</button>
+            <button class="btn btn-bluff" data-rank="6">Flush</button>
+          </div>
+        </div>
+        <div class="callbluff-controls" id="callBluffControls" hidden>
+          <p class="bluff-prompt">Call someone's bluff?</p>
+          <div class="bluff-claims" id="bluffClaims"></div>
+        </div>
+      </div>
+
+      <!-- ACTION LOG -->
+      <div class="action-log" id="actionLog"></div>
+    </div>
+  </section>
+
+  <!-- RESULTS OVERLAY -->
+  <div class="results-overlay" id="resultsOverlay" hidden>
+    <div class="results-card">
+      <h2 id="resultsTitle">Round Over!</h2>
+      <div id="resultsBody"></div>
+      <button class="btn btn-primary" id="nextRoundBtn">Next Round</button>
+      <button class="btn btn-ghost" id="backToLobbyBtn">Back to Lobby</button>
+    </div>
+  </div>
+
+  <script type="module" src="app.js" crossorigin="anonymous"></script>
+</body>
+</html>
