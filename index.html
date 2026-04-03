@@ -22,8 +22,8 @@
     <span id="phaseBannerText"></span>
   </div>
 
-  <!-- ========== JOIN SCREEN ========== -->
-  <section id="joinScreen" class="screen active">
+  <!-- ========== AUTH SCREEN ========== -->
+  <section id="authScreen" class="screen active">
     <div class="join-wrapper">
       <div class="brand">
         <div class="brand-logo">🃏</div>
@@ -31,13 +31,40 @@
         <p class="brand-tagline">Lie. Bet. Win.</p>
       </div>
       <div class="join-card">
-        <label for="nameInput" class="join-label">Your display name</label>
-        <input type="text" id="nameInput" class="join-input" placeholder="Enter your name" maxlength="16" autocomplete="off" />
-        <button id="joinBtn" class="btn-primary btn-glow" disabled>
-          <span>Join the Table</span>
-          <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-        </button>
-        <p class="join-hint">Free to play · No sign-up required</p>
+        <!-- Auth Tabs -->
+        <div class="auth-tabs">
+          <button class="auth-tab active" id="loginTab">Sign In</button>
+          <button class="auth-tab" id="signupTab">Sign Up</button>
+        </div>
+
+        <!-- Sign In Form -->
+        <div id="loginForm" class="auth-form">
+          <label for="loginEmail" class="join-label">Email</label>
+          <input type="email" id="loginEmail" class="join-input" placeholder="you@example.com" autocomplete="email" />
+          <label for="loginPassword" class="join-label" style="margin-top:14px">Password</label>
+          <input type="password" id="loginPassword" class="join-input" placeholder="Your password" autocomplete="current-password" />
+          <button id="loginBtn" class="btn-primary btn-glow" disabled>
+            <span>Sign In</span>
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </button>
+        </div>
+
+        <!-- Sign Up Form -->
+        <div id="signupForm" class="auth-form hidden">
+          <label for="signupName" class="join-label">Display Name</label>
+          <input type="text" id="signupName" class="join-input" placeholder="Your poker name" maxlength="16" autocomplete="off" />
+          <label for="signupEmail" class="join-label" style="margin-top:14px">Email</label>
+          <input type="email" id="signupEmail" class="join-input" placeholder="you@example.com" autocomplete="email" />
+          <label for="signupPassword" class="join-label" style="margin-top:14px">Password</label>
+          <input type="password" id="signupPassword" class="join-input" placeholder="Min 6 characters" autocomplete="new-password" />
+          <button id="signupBtn" class="btn-primary btn-glow" disabled>
+            <span>Create Account</span>
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </button>
+        </div>
+
+        <div class="auth-error hidden" id="authError"></div>
+        <p class="join-hint">Free to play · Your data is secure</p>
       </div>
     </div>
   </section>
@@ -52,7 +79,7 @@
             <button id="muteBtn" class="icon-btn" title="Toggle sound">
               <svg id="muteIcon" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
             </button>
-            <button id="leaveBtn" class="icon-btn" title="Leave lobby">
+            <button id="logoutBtn" class="icon-btn" title="Sign out">
               <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
             </button>
           </div>
