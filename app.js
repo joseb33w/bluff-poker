@@ -19,79 +19,34 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
     const LS_GAME_ID = 'bluff_poker_current_game'
     const LS_SESSION_ID = 'bluff_poker_session_id'
 
-    /* ===== ENSURE ANONYMOUS AUTH ===== */
-    async function ensureAuth() {
-      try {
-        const { data: { session } } = await supabase.auth.getSession()
-        if (session) return true
-
-        /* Try to restore saved credentials first */
-        const saved = localStorage.getItem('bluff_poker_auth')
-        if (saved) {
-          try {
-            const creds = JSON.parse(saved)
-            const { data, error } = await supabase.auth.signInWithPassword({
-              email: creds.email,
-              password: creds.password
-            })
-            if (data?.session) return true
-          } catch (e) { /* continue to create new account */ }
-        }
-
-        /* Create a new anonymous account with auto-confirm workaround:
-           Use signUp and immediately signIn — the anon key allows inserts
-           once a valid auth user_id exists in the JWT */
-        const uid = crypto.randomUUID()
-        const email = `player_${uid.slice(0,8)}@bluffpoker.local`
-        const password = uid
-
-        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            emailRedirectTo: 'https://sling-gogiapp.web.app/email-confirmed.html'
-          }
-        })
-
-        /* Save creds regardless — the session from signUp may work even unconfirmed */
-        localStorage.setItem('bluff_poker_auth', JSON.stringify({ email, password }))
-
-        /* If signUp gave us a session, we're good */
-        if (signUpData?.session) return true
-
-        /* If no session from signUp (email confirmation required), try signIn */
-        const { data: signInData } = await supabase.auth.signInWithPassword({
-          email, password
-        })
-        if (signInData?.session) return true
-
-        /* Last resort: try anonymous sign-in if enabled */
-        try {
-          const { data: anonData } = await supabase.auth.signInAnonymously()
-          if (anonData?.session) return true
-        } catch (e) { /* anonymous auth may not be enabled */ }
-
-        return false
-      } catch (e) {
-        console.warn('Auth setup:', e.message)
-        return false
-      }
-    }
-
     /* ===== DOM ===== */
     const $ = id => document.getElementById(id)
-    const joinScreen = $('joinScreen')
+    const authScreen = $('authScreen')
     const lobbyScreen = $('lobbyScreen')
     const gameScreen = $('gameScreen')
-    const nameInput = $('nameInput')
-    const joinBtn = $('joinBtn')
+
+    /* Auth DOM */
+    const loginTab = $('loginTab')
+    const signupTab = $('signupTab')
+    const loginForm = $('loginForm')
+    const signupForm = $('signupForm')
+    const loginEmail = $('loginEmail')
+    const loginPassword = $('loginPassword')
+    const loginBtn = $('loginBtn')
+    const signupName = $('signupName')
+    const signupEmail = $('signupEmail')
+    const signupPassword = $('signupPassword')
+    const signupBtn = $('signupBtn')
+    const authError = $('authError')
+
+    /* Lobby & Game DOM */
     const lobbyPlayers = $('lobbyPlayers')
     const lobbySub = $('lobbySub')
     const startGameBtn = $('startGameBtn')
     const aiGameBtn = $('aiGameBtn')
     const aiPicker = $('aiPicker')
     const aiPickerCancel = $('aiPickerCancel')
-    const leaveBtn = $('leaveBtn')
+    const logoutBtn = $('logoutBtn')
     const muteBtn = $('muteBtn')
     const gameMuteBtn = $('gameMuteBtn')
     const gameLeaveBtn = $('gameLeaveBtn')
@@ -144,6 +99,207 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
     let gameChannel = null
     let pendingRaise = 0
     let lastPhase = ''
+
+    /* ============================================================
+       AUTH — SIGN IN / SIGN UP WITH REAL EMAIL
+       ============================================================ */
+
+    /* Tab switching */
+    loginTab.addEventListener('click', () => {
+      loginTab.classList.add('active')
+      signupTab.classList.remove('active')
+      loginForm.classList.remove('hidden')
+      signupForm.classList.add('hidden')
+      hideAuthError()
+    })
+    signupTab.addEventListener('click', () => {
+      signupTab.classList.add('active')
+      loginTab.classList.remove('active')
+      signupForm.classList.remove('hidden')
+      loginForm.classList.add('hidden')
+      hideAuthError()
+    })
+
+    function showAuthError(msg) {
+      authError.textContent = msg
+      authError.classList.remove('hidden')
+    }
+    function hideAuthError() {
+      authError.classList.add('hidden')
+    }
+
+    /* Validate login form */
+    function validateLogin() {
+      loginBtn.disabled = !(loginEmail.value.includes('@') && loginPassword.value.length >= 6)
+    }
+    loginEmail.addEventListener('input', validateLogin)
+    loginPassword.addEventListener('input', validateLogin)
+
+    /* Validate signup form */
+    function validateSignup() {
+      signupBtn.disabled = !(
+        signupName.value.trim().length >= 2 &&
+        signupEmail.value.includes('@') &&
+        signupPassword.value.length >= 6
+      )
+    }
+    signupName.addEventListener('input', validateSignup)
+    signupEmail.addEventListener('input', validateSignup)
+    signupPassword.addEventListener('input', validateSignup)
+
+    /* SIGN IN */
+    loginBtn.addEventListener('click', async () => {
+      hideAuthError()
+      loginBtn.disabled = true
+      loginBtn.querySelector('span').textContent = 'Signing in…'
+      try {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: loginEmail.value.trim(),
+          password: loginPassword.value
+        })
+        if (error) throw error
+        if (!data.session) throw new Error('No session returned')
+
+        /* Session is established — find or create player row */
+        await enterLobbyWithAuth(data.user)
+      } catch (err) {
+        console.error('Login error:', err)
+        let msg = err.message || 'Sign in failed'
+        if (msg.includes('Invalid login')) msg = 'Invalid email or password'
+        if (msg.includes('Email not confirmed')) msg = 'Please check your email and confirm your account first'
+        showAuthError(msg)
+      }
+      loginBtn.disabled = false
+      loginBtn.querySelector('span').textContent = 'Sign In'
+      validateLogin()
+    })
+
+    /* SIGN UP */
+    signupBtn.addEventListener('click', async () => {
+      hideAuthError()
+      signupBtn.disabled = true
+      signupBtn.querySelector('span').textContent = 'Creating account…'
+      try {
+        const email = signupEmail.value.trim()
+        const password = signupPassword.value
+        const name = signupName.value.trim()
+
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: { display_name: name },
+            emailRedirectTo: window.location.href
+          }
+        })
+        if (error) throw error
+
+        /* If we got a session immediately (auto-confirm on), go to lobby */
+        if (data.session) {
+          localStorage.setItem(LS_NAME, name)
+          await enterLobbyWithAuth(data.user, name)
+          return
+        }
+
+        /* Email confirmation required — show message */
+        showAuthConfirmation(email)
+      } catch (err) {
+        console.error('Signup error:', err)
+        let msg = err.message || 'Sign up failed'
+        if (msg.includes('already registered')) msg = 'This email is already registered. Try signing in.'
+        showAuthError(msg)
+      }
+      signupBtn.disabled = false
+      signupBtn.querySelector('span').textContent = 'Create Account'
+      validateSignup()
+    })
+
+    function showAuthConfirmation(email) {
+      /* Replace the form area with a confirmation message */
+      const card = document.querySelector('.join-card')
+      card.innerHTML = `
+        <div class="auth-confirm">
+          <p style="font-size:2rem;margin-bottom:8px;">📧</p>
+          <p style="font-size:1.1rem;font-weight:800;margin-bottom:8px;color:var(--text);">Check your email!</p>
+          <p>We sent a confirmation link to <strong style="color:var(--accent)">${esc(email)}</strong></p>
+          <p style="margin-top:8px;">Click the link in the email, then come back and sign in.</p>
+        </div>
+        <button class="btn-secondary" style="margin-top:18px" id="backToLoginBtn">
+          <span>← Back to Sign In</span>
+        </button>
+      `
+      document.getElementById('backToLoginBtn').addEventListener('click', () => {
+        window.location.reload()
+      })
+    }
+
+    /* After successful auth, create/find player and enter lobby */
+    async function enterLobbyWithAuth(user, nameOverride) {
+      try {
+        const sessionId = user.id /* Use Supabase user ID as stable session ID */
+        localStorage.setItem(LS_SESSION_ID, sessionId)
+
+        /* Check if player row exists for this user already */
+        const { data: existing } = await supabase.from(P_TABLE)
+          .select('*').eq('session_id', sessionId).maybeSingle()
+
+        let playerData
+        const displayName = nameOverride || existing?.display_name || user.user_metadata?.display_name || user.email.split('@')[0]
+
+        if (existing) {
+          const { data, error } = await supabase.from(P_TABLE).update({
+            display_name: displayName,
+            is_online: true,
+            last_seen: new Date().toISOString()
+          }).eq('id', existing.id).select().single()
+          if (error) throw error
+          playerData = data
+        } else {
+          const { data, error } = await supabase.from(P_TABLE).insert({
+            display_name: displayName,
+            chips: 1000,
+            session_id: sessionId,
+            is_online: true,
+            wins: 0,
+            losses: 0,
+            total_earnings: 0
+          }).select().single()
+          if (error) throw error
+          playerData = data
+        }
+
+        playerId = playerData.id
+        playerName = playerData.display_name
+        playerChips = playerData.chips || 1000
+        localStorage.setItem(LS_PLAYER_ID, playerId)
+        localStorage.setItem(LS_NAME, playerName)
+
+        showScreen('lobby')
+        showToast(`Welcome, ${playerName}! 🎰`, 'success', '🃏')
+        initLobby()
+      } catch (err) {
+        console.error('Enter lobby error:', err)
+        showAuthError('Failed to create player profile: ' + (err.message || err))
+      }
+    }
+
+    /* LOGOUT */
+    logoutBtn.addEventListener('click', async () => {
+      playSound('click')
+      if (lobbyChannel) { supabase.removeChannel(lobbyChannel); lobbyChannel = null }
+      try {
+        await supabase.from(P_TABLE).update({ is_online: false }).eq('id', playerId)
+      } catch (e) { /* ok */ }
+      await supabase.auth.signOut()
+      localStorage.removeItem(LS_PLAYER_ID)
+      localStorage.removeItem(LS_GAME_ID)
+      localStorage.removeItem(LS_SESSION_ID)
+      localStorage.removeItem(LS_NAME)
+      playerId = null
+      playerName = ''
+      showScreen('auth')
+      showToast('Signed out', 'info', '👋')
+    })
 
     /* ===== AUDIO ===== */
     let audioCtx = null
@@ -336,7 +492,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 
     /* ===== SCREEN NAV ===== */
     function showScreen(name) {
-      const screens = { join: joinScreen, lobby: lobbyScreen, game: gameScreen }
+      const screens = { auth: authScreen, lobby: lobbyScreen, game: gameScreen }
       Object.entries(screens).forEach(([key, el]) => {
         if (key === name) {
           el.classList.remove('exit-up', 'exit-down')
@@ -406,147 +562,6 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       }
     }
 
-    /* ===== JOIN ===== */
-    nameInput.addEventListener('input', () => {
-      joinBtn.disabled = nameInput.value.trim().length < 2
-    })
-
-    joinBtn.addEventListener('click', async () => {
-      const name = nameInput.value.trim()
-      if (name.length < 2) return
-      playSound('click')
-      joinBtn.disabled = true
-      joinBtn.querySelector('span').textContent = 'Joining…'
-      try {
-        const authOk = await ensureAuth()
-        if (!authOk) {
-          console.warn('Auth not fully established, proceeding with offline mode')
-        }
-
-        const sessionId = localStorage.getItem(LS_SESSION_ID) || crypto.randomUUID()
-        localStorage.setItem(LS_SESSION_ID, sessionId)
-
-        /* Check if this session already has a player row */
-        const { data: existing } = await supabase.from(P_TABLE)
-          .select('*').eq('session_id', sessionId).maybeSingle()
-
-        let playerData
-        if (existing) {
-          /* Update existing player */
-          const { data, error } = await supabase.from(P_TABLE).update({
-            display_name: name, is_online: true, last_seen: new Date().toISOString()
-          }).eq('id', existing.id).select().single()
-          if (error) throw error
-          playerData = data
-        } else {
-          /* Create new player */
-          const { data, error } = await supabase.from(P_TABLE).insert({
-            display_name: name, chips: 1000, session_id: sessionId,
-            is_online: true, wins: 0, losses: 0, total_earnings: 0
-          }).select().single()
-          if (error) throw error
-          playerData = data
-        }
-
-        playerId = playerData.id
-        playerName = name
-        playerChips = playerData.chips || 1000
-        localStorage.setItem(LS_PLAYER_ID, playerId)
-        localStorage.setItem(LS_NAME, name)
-        showScreen('lobby')
-        showToast(`Welcome, ${name}! 🎰`, 'success', '🃏')
-        initLobby()
-      } catch (err) {
-        console.error('Join error:', err)
-        /* If DB insert fails, still allow AI play */
-        playerId = localStorage.getItem(LS_SESSION_ID) || crypto.randomUUID()
-        playerName = name
-        playerChips = 1000
-        localStorage.setItem(LS_PLAYER_ID, playerId)
-        localStorage.setItem(LS_NAME, name)
-        showScreen('lobby')
-        showToast(`Welcome, ${name}! (Offline mode)`, 'warning', '🃏')
-        initLobby()
-      }
-      joinBtn.disabled = false
-      joinBtn.querySelector('span').textContent = 'Join the Table'
-    })
-
-    /* ===== AUTO-LOGIN ===== */
-    async function tryAutoLogin() {
-      const savedId = localStorage.getItem(LS_PLAYER_ID)
-      const savedName = localStorage.getItem(LS_NAME)
-      if (!savedId || !savedName) return false
-      try {
-        await ensureAuth()
-        const { data, error } = await supabase.from(P_TABLE)
-          .select('*').eq('id', savedId).maybeSingle()
-        if (error || !data) {
-          /* Player row gone — but we still have name, so go to lobby with session fallback */
-          const sessionId = localStorage.getItem(LS_SESSION_ID)
-          if (sessionId) {
-            const { data: bySession } = await supabase.from(P_TABLE)
-              .select('*').eq('session_id', sessionId).maybeSingle()
-            if (bySession) {
-              await supabase.from(P_TABLE).update({
-                is_online: true, last_seen: new Date().toISOString()
-              }).eq('id', bySession.id)
-              playerId = bySession.id
-              playerName = bySession.display_name
-              playerChips = bySession.chips || 1000
-              localStorage.setItem(LS_PLAYER_ID, playerId)
-              localStorage.setItem(LS_NAME, playerName)
-              nameInput.value = playerName
-
-              showScreen('lobby')
-              showToast(`Welcome back, ${playerName}!`, 'success', '👋')
-              initLobby()
-              return true
-            }
-          }
-          /* Nothing found — prefill name and show join */
-          nameInput.value = savedName
-          joinBtn.disabled = savedName.length < 2
-          return false
-        }
-
-        await supabase.from(P_TABLE).update({
-          is_online: true, last_seen: new Date().toISOString()
-        }).eq('id', savedId)
-
-        playerId = savedId
-        playerName = data.display_name || savedName
-        playerChips = data.chips || 1000
-        nameInput.value = playerName
-
-        /* Check if was in a game */
-        const savedGameId = localStorage.getItem(LS_GAME_ID)
-        if (savedGameId && data.current_game_id) {
-          const { data: gData } = await supabase.from(G_TABLE)
-            .select('*').eq('id', savedGameId).maybeSingle()
-          if (gData && (gData.status === 'playing' || gData.status === 'waiting')) {
-            currentGameId = savedGameId
-            showScreen('game')
-            showToast('Reconnected to your game!', 'info', '🔄')
-            initGameSubscriptions()
-            await refreshGameState()
-            return true
-          }
-        }
-
-        showScreen('lobby')
-        showToast(`Welcome back, ${playerName}!`, 'success', '👋')
-        initLobby()
-        return true
-      } catch (e) {
-        console.warn('Auto-login failed:', e.message)
-        /* Prefill name even if auto-login fails */
-        nameInput.value = savedName
-        joinBtn.disabled = savedName.length < 2
-        return false
-      }
-    }
-
     /* ===== LOBBY ===== */
     async function initLobby() {
       playerNameTag.textContent = playerName
@@ -603,27 +618,11 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       } catch (e) { /* ok */ }
     }
 
-    /* ===== LEAVE LOBBY ===== */
-    leaveBtn.addEventListener('click', async () => {
-      playSound('click')
-      if (lobbyChannel) { supabase.removeChannel(lobbyChannel); lobbyChannel = null }
-      try {
-        await supabase.from(P_TABLE).update({ is_online: false }).eq('id', playerId)
-      } catch (e) { /* ok */ }
-      /* Keep LS_NAME and LS_SESSION_ID so user is remembered */
-      localStorage.removeItem(LS_PLAYER_ID)
-      localStorage.removeItem(LS_GAME_ID)
-      playerId = null
-      showScreen('join')
-      showToast('Left the lobby', 'info', '👋')
-    })
-
     /* ===== START MULTIPLAYER ===== */
     startGameBtn.addEventListener('click', async () => {
       playSound('click')
       startGameBtn.disabled = true
       try {
-        await ensureAuth()
         const { data: onlinePlayers } = await supabase.from(P_TABLE)
           .select('id').eq('is_online', true).limit(6)
         if (!onlinePlayers || onlinePlayers.length < 2) {
@@ -724,7 +723,6 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 
     /* ===== DEAL ===== */
     async function dealNewRound(gameId, turnOrder) {
-      await ensureAuth()
       const deck = shuffleDeck(newDeck())
       let ci = 0
       for (const pid of turnOrder) {
@@ -970,7 +968,6 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 
       // Multiplayer action
       try {
-        await ensureAuth()
         const actionData = {
           game_id: currentGameId, player_id: playerId, player_name: playerName,
           action_type: type, amount, phase: gameState.phase
@@ -1087,7 +1084,6 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
         dealAiRound()
       } else {
         // New round multiplayer
-        await ensureAuth()
         const turnOrder = gameState.turn_order
         const newGameId = crypto.randomUUID()
         currentGameId = newGameId
@@ -1139,7 +1135,6 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
         myHand.has_folded = true
         addLogEntry(playerName, 'fold', 0)
         showToast('You folded', 'info', '🏳️')
-        // AI wins
         const winner = aiPlayers.find(a => !a.has_folded) || aiPlayers[0]
         endAiRound(winner.id, 'player_folded')
         return
@@ -1167,11 +1162,8 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
         renderBluffClaim({ player_name: playerName, claim_text: claim.text })
       }
 
-      /* Disable actions while AI is thinking */
       toggleActions(false, gameState)
       renderAiGame()
-
-      // AI turns
       setTimeout(() => runAiTurns(), 800)
     }
 
@@ -1218,7 +1210,6 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
         }, delay)
       }
 
-      // After all AI acted, check round end
       setTimeout(() => {
         const stillActive = aiPlayers.filter(a => !a.has_folded)
         if (stillActive.length === 0) {
@@ -1231,13 +1222,11 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
           return
         }
 
-        // Go to showdown
         gameState.phase = 'showdown'
         showPhaseBanner('SHOWDOWN')
         renderAiGame()
 
         setTimeout(() => {
-          // Determine winner
           let bestScore = evaluateHand(myHand.cards).score
           let winnerId = playerId
 
@@ -1286,9 +1275,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
         setTimeout(() => potAmountEl.classList.remove('pot-win'), 800)
       }
 
-      // Show all hands
       resultsHands.innerHTML = ''
-      // Player hand
       const myEval = evaluateHand(myHand.cards)
       const pRow = document.createElement('div')
       pRow.className = `results-hand-row${isMe ? ' winner' : ''}`
@@ -1374,7 +1361,6 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       entry.className = cls
       entry.innerHTML = text
       actionLogInner.prepend(entry)
-      // Keep max 30
       while (actionLogInner.children.length > 30) actionLogInner.lastChild.remove()
     }
 
@@ -1392,34 +1378,22 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       }
     }, 30000)
 
-    /* ===== CLEANUP ON UNLOAD ===== */
-    window.addEventListener('beforeunload', () => {
-      /* Don't clear localStorage — user should be remembered */
-    })
-
-    /* ===== INIT ===== */
+    /* ===== INIT — CHECK EXISTING SESSION ===== */
     async function init() {
-      /* Restore saved auth session first */
       try {
-        const savedAuth = localStorage.getItem('bluff_poker_auth')
-        if (savedAuth) {
-          const creds = JSON.parse(savedAuth)
-          const { data: { session } } = await supabase.auth.getSession()
-          if (!session) {
-            await supabase.auth.signInWithPassword({ email: creds.email, password: creds.password })
-          }
+        /* Check if user already has a valid Supabase session */
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session && session.user) {
+          /* Already logged in — go straight to lobby */
+          await enterLobbyWithAuth(session.user)
+          return
         }
-      } catch (e) { console.warn('Session restore:', e.message) }
-
-      const autoLoggedIn = await tryAutoLogin()
-      if (!autoLoggedIn) {
-        const savedName = localStorage.getItem(LS_NAME)
-        if (savedName) {
-          nameInput.value = savedName
-          joinBtn.disabled = savedName.length < 2
-        }
-        showScreen('join')
+      } catch (e) {
+        console.warn('Session check error:', e.message)
       }
+
+      /* No session — show auth screen */
+      showScreen('auth')
     }
 
     init()
