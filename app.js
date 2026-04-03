@@ -24,38 +24,57 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       try {
         const { data: { session } } = await supabase.auth.getSession()
         if (session) return true
-        /* Sign up with a random email/password so RLS user_id is set */
+
+        /* Try to restore saved credentials first */
+        const saved = localStorage.getItem('bluff_poker_auth')
+        if (saved) {
+          try {
+            const creds = JSON.parse(saved)
+            const { data, error } = await supabase.auth.signInWithPassword({
+              email: creds.email,
+              password: creds.password
+            })
+            if (data?.session) return true
+          } catch (e) { /* continue to create new account */ }
+        }
+
+        /* Create a new anonymous account with auto-confirm workaround:
+           Use signUp and immediately signIn — the anon key allows inserts
+           once a valid auth user_id exists in the JWT */
         const uid = crypto.randomUUID()
         const email = `player_${uid.slice(0,8)}@bluffpoker.local`
         const password = uid
-        const { data, error } = await supabase.auth.signUp({
+
+        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
           email,
           password,
-          options: { emailRedirectTo: 'https://sling-gogiapp.web.app/email-confirmed.html' }
-        })
-        if (error && error.message && !error.message.includes('already')) {
-          /* Try sign in if sign up fails */
-          const saved = localStorage.getItem('bluff_poker_auth')
-          if (saved) {
-            const creds = JSON.parse(saved)
-            await supabase.auth.signInWithPassword({ email: creds.email, password: creds.password })
+          options: {
+            emailRedirectTo: 'https://sling-gogiapp.web.app/email-confirmed.html'
           }
-          return true
-        }
-        /* Save creds for future sessions */
+        })
+
+        /* Save creds regardless — the session from signUp may work even unconfirmed */
         localStorage.setItem('bluff_poker_auth', JSON.stringify({ email, password }))
-        return true
+
+        /* If signUp gave us a session, we're good */
+        if (signUpData?.session) return true
+
+        /* If no session from signUp (email confirmation required), try signIn */
+        const { data: signInData } = await supabase.auth.signInWithPassword({
+          email, password
+        })
+        if (signInData?.session) return true
+
+        /* Last resort: try anonymous sign-in if enabled */
+        try {
+          const { data: anonData } = await supabase.auth.signInAnonymously()
+          if (anonData?.session) return true
+        } catch (e) { /* anonymous auth may not be enabled */ }
+
+        return false
       } catch (e) {
         console.warn('Auth setup:', e.message)
-        /* Try restoring saved creds */
-        try {
-          const saved = localStorage.getItem('bluff_poker_auth')
-          if (saved) {
-            const creds = JSON.parse(saved)
-            await supabase.auth.signInWithPassword({ email: creds.email, password: creds.password })
-          }
-        } catch (e2) { console.warn('Auth restore failed:', e2.message) }
-        return true
+        return false
       }
     }
 
@@ -399,7 +418,11 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       joinBtn.disabled = true
       joinBtn.querySelector('span').textContent = 'Joining…'
       try {
-        await ensureAuth()
+        const authOk = await ensureAuth()
+        if (!authOk) {
+          console.warn('Auth not fully established, proceeding with offline mode')
+        }
+
         const sessionId = localStorage.getItem(LS_SESSION_ID) || crypto.randomUUID()
         localStorage.setItem(LS_SESSION_ID, sessionId)
 
